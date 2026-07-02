@@ -1,0 +1,442 @@
+### TTS server — usage examples & tests
+#
+# Format: JetBrains HTTP Client (GoLand/IntelliJ). The `> {% ... %}` blocks are
+# response-handler tests; the plain requests also work in the VS Code REST Client.
+#
+# Prerequisites:
+#   mise run serve            # or: mise run service:install
+# The server binds 127.0.0.1:8080 by default. The FIRST /say blocks until the
+# Kokoro model finishes loading (and, on a cold machine, downloads ~330 MB once),
+# so give it a few seconds. Successful /say requests PLAY AUDIO out loud via VLC.
+#
+# Variables (edit inline, or override with an http-client.env.json):
+@baseUrl = http://127.0.0.1:8080
+# Only needed if the server was started with -token / TTS_TOKEN:
+@token = changeme
+
+###############################################################################
+# Health & status
+###############################################################################
+
+### Liveness check (no auth, even when a token is configured)
+# @name health
+GET {{baseUrl}}/healthz
+
+> {%
+    client.test("200 OK", () => client.assert(response.status === 200));
+    client.test("status is ok", () => client.assert(response.body.status === "ok"));
+%}
+
+### Queue + engine status
+# @name status
+GET {{baseUrl}}/status
+
+> {%
+    client.test("200 OK", () => client.assert(response.status === 200));
+    client.test("has queue fields", () => {
+        client.assert(response.body.hasOwnProperty("paused"));
+        client.assert(response.body.hasOwnProperty("engineReady"));
+        client.assert(response.body.hasOwnProperty("queueLength"));
+    });
+    client.log("engineReady = " + response.body.engineReady +
+               ", queueLength = " + response.body.queueLength);
+%}
+
+###############################################################################
+# Speaking — the endpoint your Twitch bot calls
+###############################################################################
+
+### Basic: speak some text (JSON body). Plays audio on success.
+# @name say
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{
+  "text": "Hello chat, this is the text to speech bot."
+}
+
+> {%
+    client.test("accepted (202)", () => client.assert(response.status === 202));
+    client.test("returns an id and position", () => {
+        client.assert(typeof response.body.id === "number");
+        client.assert(typeof response.body.position === "number");
+    });
+    // Remember the id for later requests if you want to reference it.
+    client.global.set("lastJobId", response.body.id);
+    client.log("queued job #" + response.body.id + " at position " + response.body.position);
+%}
+
+### Per-request voice override — American male "Adam"
+# @name say-voice-adam
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{
+  "text": "This clip is spoken by Adam instead of the default voice.",
+  "voice": "am_adam"
+}
+
+> {%
+    client.test("accepted (202)", () => client.assert(response.status === 202));
+%}
+
+### Another voice — British female "Emma"
+# @name say-voice-emma
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{
+  "text": "And this one is Emma, a British English voice.",
+  "voice": "bf_emma"
+}
+
+### Form-encoded body (handy for shells / simple bots)
+# @name say-form
+POST {{baseUrl}}/say
+Content-Type: application/x-www-form-urlencoded
+
+text=Speaking from a form encoded request&voice=af_bella
+
+> {%
+    client.test("accepted (202)", () => client.assert(response.status === 202));
+%}
+
+### Query-string form (text as a URL parameter)
+# @name say-query
+POST {{baseUrl}}/say?text=Speaking%20from%20a%20query%20parameter&voice=am_michael
+
+> {%
+    client.test("accepted (202)", () => client.assert(response.status === 202));
+%}
+
+###############################################################################
+# All kokoro voices — one request each (the text names the voice so you can
+# tell them apart by ear). Source: kokoro/demo/app.py CHOICES.
+#
+# Tip: run "pause" (below) first, fire the voices you want to compare, then
+# "resume" so they play back-to-back instead of piling onto the speakers.
+#
+# British (b*) voices work fine against the default `-lang a` server — they use
+# American pronunciation with that speaker's timbre (kokoro just logs a mismatch
+# warning). For true British G2P, start the server with `-lang b`.
+#
+# Non-English voices (Spanish ef_/em_, French ff_, Hindi hf_/hm_, Italian
+# if_/im_, Portuguese pf_/pm_, Japanese jf_/jm_, Chinese zf_/zm_) require the
+# server started with the matching `-lang <code>` and the extra misaki language
+# packages, so they aren't listed as live requests here.
+###############################################################################
+
+# ---- American English · female (lang a) -------------------------------------
+
+### af_heart (default)
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the af heart voice.", "voice": "af_heart" }
+
+### af_bella
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the af bella voice.", "voice": "af_bella" }
+
+### af_nicole
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "let's fucking goon", "voice": "af_nicole" }
+
+### af_aoede
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "let's fucking goon", "voice": "af_aoede" }
+
+### af_kore
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "let's fucking goon", "voice": "af_kore" }
+
+### af_sarah
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "let's fucking goon", "voice": "af_sarah" }
+
+### af_nova
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the af nova voice.", "voice": "af_nova" }
+
+### af_sky
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "let's fucking goon", "voice": "af_sky" }
+
+### af_alloy
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the af alloy voice.", "voice": "af_alloy" }
+
+### af_jessica
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the af jessica voice.", "voice": "af_jessica" }
+
+### af_river
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the af river voice.", "voice": "af_river" }
+
+#### ---- American English · male (lang a) ---------------------------------------
+
+### am_michael
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the am michael voice.", "voice": "am_michael" }
+
+### am_fenrir
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the am fenrir voice.", "voice": "am_fenrir" }
+
+### am_puck
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the am puck voice.", "voice": "am_puck" }
+
+### am_echo
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the am echo voice.", "voice": "am_echo" }
+
+### am_eric
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the am eric voice.", "voice": "am_eric" }
+
+### am_liam
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the am liam voice.", "voice": "am_liam" }
+
+### am_onyx
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the am onyx voice.", "voice": "am_onyx" }
+
+### am_santa
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the am santa voice.", "voice": "am_santa" }
+
+### am_adam
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the am adam voice.", "voice": "am_adam" }
+
+#### ---- British English · female (best with -lang b) ---------------------------
+
+### bf_emma
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the bf emma voice.", "voice": "bf_emma" }
+
+### bf_isabella
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the bf isabella voice.", "voice": "bf_isabella" }
+
+### bf_alice
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the bf alice voice.", "voice": "bf_alice" }
+
+### bf_lily
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the bf lily voice.", "voice": "bf_lily" }
+
+#### ---- British English · male (best with -lang b) -----------------------------
+
+### bm_george
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the bm george voice.", "voice": "bm_george" }
+
+### bm_fable
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the bm fable voice.", "voice": "bm_fable" }
+
+### bm_lewis
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the bm lewis voice.", "voice": "bm_lewis" }
+
+### bm_daniel
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "This is the bm daniel voice.", "voice": "bm_daniel" }
+
+###############################################################################
+# Validation & limits
+###############################################################################
+
+### Empty text is rejected with 400
+# @name say-empty
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{
+  "text": "   "
+}
+
+> {%
+    client.test("rejected (400)", () => client.assert(response.status === 400));
+    client.test("error mentions text", () => client.assert(response.body.error === "text is required"));
+%}
+
+### Over-long text is truncated to -max-chars (default 500), not rejected
+# @name say-long
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{
+  "text": "This message is intentionally very long so that it exceeds the maximum character limit configured on the server. Twitch messages can be lengthy, and instead of dropping the request the server truncates the text down to the configured cap and still speaks the beginning of it. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur."
+}
+
+> {%
+    client.test("accepted (202)", () => client.assert(response.status === 202));
+    client.test("was truncated", () => client.assert(response.body.truncated === true));
+%}
+
+###############################################################################
+# Queue controls
+###############################################################################
+# Tip to see queueing without audio: run "pause" first, then the three "burst"
+# requests below, then "status" (they pile up), then "clear" (drops them) — or
+# "resume" to actually play them.
+
+### Pause — stop starting new items (a clip already playing finishes)
+# @name pause
+POST {{baseUrl}}/pause
+
+> {%
+    client.test("200 OK", () => client.assert(response.status === 200));
+    client.test("paused is true", () => client.assert(response.body.paused === true));
+%}
+
+### Burst 1 of 3 (queues; only plays when not paused)
+# @name burst-1
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "First message in the queue." }
+
+### Burst 2 of 3
+# @name burst-2
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "Second message in the queue." }
+
+### Burst 3 of 3
+# @name burst-3
+POST {{baseUrl}}/say
+Content-Type: application/json
+
+{ "text": "Third message in the queue." }
+
+### Resume — start playing queued items again (serially, one at a time)
+# @name resume
+POST {{baseUrl}}/resume
+
+> {%
+    client.test("200 OK", () => client.assert(response.status === 200));
+    client.test("paused is false", () => client.assert(response.body.paused === false));
+%}
+
+### Clear — drop all pending items (the current clip keeps playing)
+# @name clear
+POST {{baseUrl}}/clear
+
+> {%
+    client.test("200 OK", () => client.assert(response.status === 200));
+    client.test("reports how many were cleared", () => client.assert(typeof response.body.cleared === "number"));
+    client.log("cleared " + response.body.cleared + " item(s)");
+%}
+
+### Skip — stop the current clip (synth or playback) and advance to the next
+# @name skip
+POST {{baseUrl}}/skip
+
+> {%
+    client.test("200 OK", () => client.assert(response.status === 200));
+    client.test("reports whether something was skipped", () => client.assert(typeof response.body.skipped === "boolean"));
+%}
+
+###############################################################################
+# Auth (only when the server is started with -token / TTS_TOKEN)
+###############################################################################
+
+### Missing token -> 401 (start the server with `-token changeme` to see this)
+# @name auth-missing
+GET {{baseUrl}}/status
+
+> {%
+    // With a token-protected server this is 401; with an open server it's 200.
+    client.log("status without token = " + response.status);
+%}
+
+### Correct token via Authorization: Bearer
+# @name auth-bearer
+POST {{baseUrl}}/say
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "text": "Authenticated request using a bearer token." }
+
+> {%
+    client.test("authorized (202)", () => client.assert(response.status === 202));
+%}
+
+### Correct token via the X-TTS-Token header (alternative)
+# @name auth-header
+GET {{baseUrl}}/status
+X-TTS-Token: {{token}}
+
+###############################################################################
+# Method enforcement
+###############################################################################
+
+### GET on a POST-only route -> 405
+# @name wrong-method
+GET {{baseUrl}}/say
+
+> {%
+    client.test("method not allowed (405)", () => client.assert(response.status === 405));
+%}
