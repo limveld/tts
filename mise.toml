@@ -1,0 +1,51 @@
+[tools]
+go = "latest"
+python = "3.12"
+
+[tasks.setup]
+description = "Create the Python venv and install the Kokoro sidecar deps"
+run = [
+  "python -m venv .venv",
+  "./.venv/bin/pip install -U pip",
+  "./.venv/bin/pip install -r pysidecar/requirements.txt",
+]
+
+[tasks.build]
+description = "Build the tts server binary"
+sources = ["*.go", "go.mod"]
+outputs = ["tts"]
+run = "go build -o tts ."
+
+[tasks.serve]
+description = "Run the tts server in the foreground (dev)"
+depends = ["build"]
+run = "./tts"
+
+[tasks."service:install"]
+description = "Install & start the launchd service (always running, auto-start at login)"
+depends = ["build"]
+run = "bash deploy/service.sh install"
+
+[tasks."service:uninstall"]
+description = "Stop & remove the launchd service"
+run = "bash deploy/service.sh uninstall"
+
+[tasks."service:start"]
+description = "Start (load) the launchd service"
+run = "bash deploy/service.sh start"
+
+[tasks."service:stop"]
+description = "Stop (unload) the launchd service"
+run = "bash deploy/service.sh stop"
+
+[tasks."service:restart"]
+description = "Restart the launchd service"
+run = "bash deploy/service.sh restart"
+
+[tasks."service:status"]
+description = "Show the launchd service state and hit /healthz"
+run = "bash deploy/service.sh status"
+
+[tasks."service:logs"]
+description = "Follow the service error log"
+run = "bash deploy/service.sh logs"

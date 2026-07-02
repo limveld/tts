@@ -1,2 +1,5 @@
 *.wav
 .idea
+.DS_Store
+/.venv/
+/tts
