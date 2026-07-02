@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.rtukpe.tts</string>
+
+  <!-- Absolute paths so the agent doesn't depend on cwd or mise activation.
+       __REPO__ / __ADDR__ / __LOGDIR__ are substituted by deploy/service.sh. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/tts</string>
+    <string>-addr</string>
+    <string>__ADDR__</string>
+    <string>-python</string>
+    <string>__REPO__/.venv/bin/python</string>
+    <string>-sidecar</string>
+    <string>__REPO__/pysidecar/tts_sidecar.py</string>
+    <!-- To require auth, add: <string>-token</string><string>YOUR_SECRET</string>
+         (or set TTS_TOKEN in EnvironmentVariables below). -->
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- /opt/homebrew/bin so the Python sidecar can find espeak-ng. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- Allow the Apple-Silicon MPS GPU (falls back to CPU when unsupported). -->
+    <key>PYTORCH_ENABLE_MPS_FALLBACK</key>
+    <string>1</string>
+    <!-- <key>TTS_TOKEN</key><string>YOUR_SECRET</string> -->
+  </dict>
+
+  <!-- Start at login and keep it running (restart on crash). -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <!-- Interactive: run in the GUI session with higher priority (needed for audio). -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
+
+  <key>StandardOutPath</key>
+  <string>__LOGDIR__/tts-server.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOGDIR__/tts-server.err.log</string>
+</dict>
+</plist>
