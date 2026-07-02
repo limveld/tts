@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.rtukpe.tts-bot</string>
+
+  <!-- __REPO__ / __CHANNEL__ / __TTS_URL__ / __LOGDIR__ are substituted by
+       deploy/service.sh (TTS_CHANNEL is required; TTS_URL defaults to localhost). -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/bin/tts-bot</string>
+    <string>-channel</string>
+    <string>__CHANNEL__</string>
+    <string>-tts-url</string>
+    <string>__TTS_URL__</string>
+    <!-- Optional: <string>-min-role</string><string>sub</string>
+                   <string>-config</string><string>__REPO__/bot.config.json</string> -->
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- If the TTS server requires a token: <key>TTS_TOKEN</key><string>YOUR_SECRET</string> -->
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <!-- Network client, no audio/GUI needed. -->
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__LOGDIR__/tts-bot.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOGDIR__/tts-bot.err.log</string>
+</dict>
+</plist>
