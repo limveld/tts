@@ -1,0 +1,4 @@
+# Kokoro pulls in torch, transformers, numpy, misaki[en], huggingface_hub, loguru.
+# The sidecar writes WAVs with the stdlib `wave` module, so no soundfile/scipy needed.
+# Requires Python >=3.10,<3.14 and the system package espeak-ng.
+kokoro==0.9.4
