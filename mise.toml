@@ -10,42 +10,90 @@ run = [
   "./.venv/bin/pip install -r pysidecar/requirements.txt",
 ]
 
-[tasks.build]
-description = "Build the tts server binary"
-sources = ["*.go", "go.mod"]
-outputs = ["tts"]
-run = "go build -o tts ."
+# ---- server ----------------------------------------------------------------
 
-[tasks.serve]
-description = "Run the tts server in the foreground (dev)"
-depends = ["build"]
-run = "./tts"
+[tasks."server:build"]
+description = "Build the TTS server binary"
+sources = ["server/*.go", "go.mod"]
+outputs = ["bin/tts-server"]
+run = "go build -o bin/tts-server ./server"
 
-[tasks."service:install"]
-description = "Install & start the launchd service (always running, auto-start at login)"
-depends = ["build"]
-run = "bash deploy/service.sh install"
+[tasks."server:serve"]
+description = "Run the TTS server in the foreground (dev)"
+depends = ["server:build"]
+run = "./bin/tts-server"
 
-[tasks."service:uninstall"]
-description = "Stop & remove the launchd service"
-run = "bash deploy/service.sh uninstall"
+[tasks."server:service:install"]
+description = "Install & start the TTS server launchd service (auto-start at login)"
+depends = ["server:build"]
+run = "bash deploy/service.sh server install"
 
-[tasks."service:start"]
-description = "Start (load) the launchd service"
-run = "bash deploy/service.sh start"
+[tasks."server:service:uninstall"]
+description = "Stop & remove the TTS server service"
+run = "bash deploy/service.sh server uninstall"
 
-[tasks."service:stop"]
-description = "Stop (unload) the launchd service"
-run = "bash deploy/service.sh stop"
+[tasks."server:service:start"]
+description = "Start (load) the TTS server service"
+run = "bash deploy/service.sh server start"
 
-[tasks."service:restart"]
-description = "Restart the launchd service"
-run = "bash deploy/service.sh restart"
+[tasks."server:service:stop"]
+description = "Stop (unload) the TTS server service"
+run = "bash deploy/service.sh server stop"
 
-[tasks."service:status"]
-description = "Show the launchd service state and hit /healthz"
-run = "bash deploy/service.sh status"
+[tasks."server:service:restart"]
+description = "Restart the TTS server service"
+run = "bash deploy/service.sh server restart"
 
-[tasks."service:logs"]
-description = "Follow the service error log"
-run = "bash deploy/service.sh logs"
+[tasks."server:service:status"]
+description = "Show the TTS server service state and hit /healthz"
+run = "bash deploy/service.sh server status"
+
+[tasks."server:service:logs"]
+description = "Follow the TTS server error log"
+run = "bash deploy/service.sh server logs"
+
+# ---- bot -------------------------------------------------------------------
+
+[tasks."bot:build"]
+description = "Build the Twitch bot binary"
+sources = ["bot/*.go", "go.mod"]
+outputs = ["bin/tts-bot"]
+run = "go build -o bin/tts-bot ./bot"
+
+[tasks."bot:test"]
+description = "Run the bot test suite"
+run = "go test ./bot/..."
+
+[tasks."bot:serve"]
+description = "Run the bot in the foreground (set TTS_CHANNEL=<your_channel>)"
+depends = ["bot:build"]
+run = './bin/tts-bot -channel "${TTS_CHANNEL:?set TTS_CHANNEL to your twitch channel}"'
+
+[tasks."bot:service:install"]
+description = "Install & start the bot launchd service (set TTS_CHANNEL first)"
+depends = ["bot:build"]
+run = "bash deploy/service.sh bot install"
+
+[tasks."bot:service:uninstall"]
+description = "Stop & remove the bot service"
+run = "bash deploy/service.sh bot uninstall"
+
+[tasks."bot:service:start"]
+description = "Start (load) the bot service"
+run = "bash deploy/service.sh bot start"
+
+[tasks."bot:service:stop"]
+description = "Stop (unload) the bot service"
+run = "bash deploy/service.sh bot stop"
+
+[tasks."bot:service:restart"]
+description = "Restart the bot service"
+run = "bash deploy/service.sh bot restart"
+
+[tasks."bot:service:status"]
+description = "Show the bot service state"
+run = "bash deploy/service.sh bot status"
+
+[tasks."bot:service:logs"]
+description = "Follow the bot error log"
+run = "bash deploy/service.sh bot logs"

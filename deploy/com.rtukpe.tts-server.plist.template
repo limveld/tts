@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.rtukpe.tts</string>
+  <string>com.rtukpe.tts-server</string>
 
   <!-- Absolute paths so the agent doesn't depend on cwd or mise activation.
        __REPO__ / __ADDR__ / __LOGDIR__ are substituted by deploy/service.sh. -->
   <key>ProgramArguments</key>
   <array>
-    <string>__REPO__/tts</string>
+    <string>__REPO__/bin/tts-server</string>
     <string>-addr</string>
     <string>__ADDR__</string>
     <string>-python</string>

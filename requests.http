@@ -4,7 +4,7 @@
 # response-handler tests; the plain requests also work in the VS Code REST Client.
 #
 # Prerequisites:
-#   mise run serve            # or: mise run service:install
+#   mise run server:serve     # or: mise run server:service:install
 # The server binds 127.0.0.1:8080 by default. The FIRST /say blocks until the
 # Kokoro model finishes loading (and, on a cold machine, downloads ~330 MB once),
 # so give it a few seconds. Successful /say requests PLAY AUDIO out loud via VLC.
