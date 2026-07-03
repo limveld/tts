@@ -30,20 +30,14 @@ func main() {
 	maxChars := flag.Int("max-chars", 500, "maximum characters per request (longer text is truncated)")
 	maxQueue := flag.Int("max-queue", 100, "maximum pending queue length")
 	tmpDir := flag.String("tmpdir", filepath.Join(os.TempDir(), "tts-server"), "directory for temporary WAV files")
+	playerMode := flag.String("player", "browser", "playback backend: browser (OBS Browser Source overlay) or vlc (local speakers)")
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 
-	// Resolve and validate the VLC binary.
-	vlcPath := *vlcBin
-	if vlcPath == "" {
-		p, err := ResolveVLC()
-		if err != nil {
-			logger.Fatalf("%v", err)
-		}
-		vlcPath = p
+	if *playerMode != "browser" && *playerMode != "vlc" {
+		logger.Fatalf("invalid -player %q: use browser or vlc", *playerMode)
 	}
-	logger.Printf("using VLC: %s", vlcPath)
 
 	// Validate the Python interpreter and sidecar script.
 	pyPath := mustExist(logger, *python, "python interpreter (create the venv or pass -python)")
@@ -59,11 +53,35 @@ func main() {
 	engine := NewEngine(pyPath, scriptPath, *lang, *voice, *speed, logger)
 	go engine.Run(ctx)
 
-	player := NewPlayer(vlcPath, logger)
-	queue := NewQueue(engine, player, *tmpDir, *maxQueue, logger)
+	// The overlay hub is always available (serves /overlay*); the browser player
+	// pushes clips to it. VLC is resolved only when actually selected.
+	overlay := NewOverlay(*tmpDir, *token, logger)
+
+	var p Player
+	if *playerMode == "vlc" {
+		vlcPath := *vlcBin
+		if vlcPath == "" {
+			resolved, err := ResolveVLC()
+			if err != nil {
+				logger.Fatalf("%v", err)
+			}
+			vlcPath = resolved
+		}
+		logger.Printf("player: vlc (%s) — audio plays on this machine's speakers", vlcPath)
+		p = NewVLCPlayer(vlcPath, logger)
+	} else {
+		tokenQuery := ""
+		if *token != "" {
+			tokenQuery = "?token=" + *token
+		}
+		logger.Printf("player: browser — add an OBS Browser Source at http://%s/overlay%s", *addr, tokenQuery)
+		p = NewBrowserPlayer(overlay, logger)
+	}
+
+	queue := NewQueue(engine, p, *tmpDir, *maxQueue, logger)
 	go queue.Run(ctx)
 
-	server := NewServer(queue, *token, *maxChars, logger)
+	server := NewServer(queue, overlay, *token, *maxChars, logger)
 	httpServer := &http.Server{Addr: *addr, Handler: server.Handler()}
 
 	// Shut the HTTP server down when a signal arrives.

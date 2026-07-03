@@ -12,15 +12,17 @@ import (
 // Server exposes the queue over HTTP.
 type Server struct {
 	queue    *Queue
+	overlay  *Overlay // may be nil; when set, /overlay* routes are registered
 	token    string
 	maxChars int
 	logger   *log.Logger
 }
 
 // NewServer builds the HTTP layer. If token is non-empty, every route except
-// /healthz requires it.
-func NewServer(q *Queue, token string, maxChars int, logger *log.Logger) *Server {
-	return &Server{queue: q, token: token, maxChars: maxChars, logger: logger}
+// /healthz (and the overlay, which authenticates via a ?token= query param)
+// requires the bearer token.
+func NewServer(q *Queue, overlay *Overlay, token string, maxChars int, logger *log.Logger) *Server {
+	return &Server{queue: q, overlay: overlay, token: token, maxChars: maxChars, logger: logger}
 }
 
 // controlResponse is the body returned by the control endpoints: the queue
@@ -41,6 +43,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/clear", s.auth(s.post(s.handleClear)))
 	mux.HandleFunc("/skip", s.auth(s.post(s.handleSkip)))
 	mux.HandleFunc("/status", s.auth(s.handleStatus))
+	if s.overlay != nil {
+		s.overlay.routes(mux) // /overlay* — auth via ?token= query param
+	}
 	return mux
 }
 

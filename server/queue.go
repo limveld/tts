@@ -45,13 +45,13 @@ type Queue struct {
 	cancelCurrent context.CancelFunc
 
 	engine *Engine
-	player *Player
+	player Player
 	tmpDir string
 	logger *log.Logger
 }
 
 // NewQueue constructs a Queue. maxLen caps the number of pending items.
-func NewQueue(engine *Engine, player *Player, tmpDir string, maxLen int, logger *log.Logger) *Queue {
+func NewQueue(engine *Engine, player Player, tmpDir string, maxLen int, logger *log.Logger) *Queue {
 	q := &Queue{
 		engine: engine,
 		player: player,
@@ -186,7 +186,7 @@ func (q *Queue) process(ctx context.Context, item QueueItem) {
 	}
 
 	q.logger.Printf("job %d playing", item.ID)
-	if err := q.player.Play(ctx, wav); err != nil {
+	if err := q.player.Play(ctx, item.ID, wav); err != nil {
 		if ctx.Err() != nil {
 			q.logger.Printf("job %d playback skipped", item.ID)
 		} else {

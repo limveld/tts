@@ -10,20 +10,27 @@ import (
 	"os/exec"
 )
 
-// Player plays WAV files through the VLC command-line interface, headless.
-type Player struct {
+// Player renders a synthesized clip and blocks until playback finishes.
+// Canceling ctx (a skip) stops playback and returns ctx.Err().
+type Player interface {
+	Play(ctx context.Context, id int64, wav string) error
+}
+
+// VLCPlayer plays WAV files through the VLC command-line interface, headless —
+// audio comes out of THIS machine's speakers (good for local use/testing).
+type VLCPlayer struct {
 	bin    string
 	logger *log.Logger
 }
 
-// NewPlayer builds a Player that shells out to the VLC binary at bin.
-func NewPlayer(bin string, logger *log.Logger) *Player {
-	return &Player{bin: bin, logger: logger}
+// NewVLCPlayer builds a player that shells out to the VLC binary at bin.
+func NewVLCPlayer(bin string, logger *log.Logger) *VLCPlayer {
+	return &VLCPlayer{bin: bin, logger: logger}
 }
 
 // Play plays wav and blocks until playback finishes. Canceling ctx (a skip)
-// kills the VLC process and returns ctx.Err().
-func (p *Player) Play(ctx context.Context, wav string) error {
+// kills the VLC process and returns ctx.Err(). The clip id is unused here.
+func (p *VLCPlayer) Play(ctx context.Context, _ int64, wav string) error {
 	// -I dummy: no interface (the `cvlc` equivalent); --play-and-exit + vlc://quit
 	// guarantee VLC exits once the clip is done rather than lingering.
 	cmd := exec.CommandContext(ctx, p.bin,
