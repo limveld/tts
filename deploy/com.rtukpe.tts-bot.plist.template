@@ -25,7 +25,10 @@
   <dict>
     <key>PATH</key>
     <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <!-- If the TTS server requires a token: <key>TTS_TOKEN</key><string>YOUR_SECRET</string> -->
+    <!-- Bearer token the bot sends to the TTS server; substituted from the
+         installing shell's $TTS_TOKEN by deploy/service.sh. Empty = no auth. -->
+    <key>TTS_TOKEN</key>
+    <string>__TTS_TOKEN__</string>
   </dict>
 
   <key>RunAtLoad</key>

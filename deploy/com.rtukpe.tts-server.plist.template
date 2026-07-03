@@ -31,7 +31,10 @@
     <!-- Allow the Apple-Silicon MPS GPU (falls back to CPU when unsupported). -->
     <key>PYTORCH_ENABLE_MPS_FALLBACK</key>
     <string>1</string>
-    <!-- <key>TTS_TOKEN</key><string>YOUR_SECRET</string> -->
+    <!-- Bearer token; substituted from the installing shell's $TTS_TOKEN by
+         deploy/service.sh. Empty = no auth. (launchd never reads ~/.zshrc.) -->
+    <key>TTS_TOKEN</key>
+    <string>__TTS_TOKEN__</string>
   </dict>
 
   <!-- Start at login and keep it running (restart on crash). -->

@@ -13,7 +13,8 @@
 #   logs       follow the error log
 #   render     print the rendered plist to stdout (for linting; no side effects)
 #
-# Env overrides:
+# Env overrides (read from the installing shell — launchd never sources ~/.zshrc):
+#   both:   TTS_TOKEN (baked into the plist's EnvironmentVariables; empty = no auth)
 #   server: TTS_ADDR (default 127.0.0.1:8080)
 #   bot:    TTS_CHANNEL (required for install), TTS_URL (default http://127.0.0.1:8080)
 set -euo pipefail
@@ -21,6 +22,9 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOGDIR="$HOME/Library/Logs"
 DOMAIN="gui/$(id -u)"
+
+# Bearer token from the current environment, escaped so sed treats it literally.
+TOKEN_ESC=$(printf '%s' "${TTS_TOKEN:-}" | sed 's/[&|\\]/\\&/g')
 
 TARGET="${1:-}"
 CMD="${2:-}"
@@ -38,6 +42,7 @@ case "$TARGET" in
     ADDR="${TTS_ADDR:-127.0.0.1:8080}"
     render() {
       sed -e "s|__REPO__|$REPO|g" -e "s|__LOGDIR__|$LOGDIR|g" -e "s|__ADDR__|$ADDR|g" \
+          -e "s|__TTS_TOKEN__|$TOKEN_ESC|g" \
           "$REPO/deploy/$LABEL.plist.template"
     }
     health() { curl -s -m 2 "http://$ADDR/healthz" && echo || echo "  (not responding)"; }
@@ -52,6 +57,7 @@ case "$TARGET" in
     render() {
       sed -e "s|__REPO__|$REPO|g" -e "s|__LOGDIR__|$LOGDIR|g" \
           -e "s|__CHANNEL__|$CHANNEL|g" -e "s|__TTS_URL__|$TTS_URL|g" \
+          -e "s|__TTS_TOKEN__|$TOKEN_ESC|g" \
           "$REPO/deploy/$LABEL.plist.template"
     }
     health() { echo "  (bot has no HTTP endpoint; check logs)"; }
