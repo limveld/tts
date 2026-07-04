@@ -23,6 +23,10 @@ type Config struct {
 	Cmds      Commands
 	Blocklist []string
 	SFX       map[string]struct{} // sound commands (lowercased, with leading "!")
+
+	TwitchClientID string
+	TwitchSecret   string
+	TokenStore     string
 }
 
 // LoadConfig parses flags/env and an optional JSON config file (blocklist).
@@ -38,12 +42,16 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&c.MinRole, "min-role", "everyone", "who can use !tts: everyone|sub|vip|mod")
 	fs.StringVar(&c.Cmds.TTSPrefix, "cmd-tts", "!tts", "TTS command prefix (voice code may follow: !ttsb)")
 	fs.StringVar(&c.Cmds.Skip, "cmd-skip", "!skip", "skip command (mod-only)")
+	fs.StringVar(&c.Cmds.SFX, "cmd-sfx", "!sfx", "sfx command lists all available commands")
 	fs.StringVar(&c.Cmds.Pause, "cmd-pause", "!pause", "pause command (mod-only)")
 	fs.StringVar(&c.Cmds.Resume, "cmd-resume", "!resume", "resume command (mod-only)")
 	fs.StringVar(&c.Cmds.Clear, "cmd-clear", "!clear", "clear command (mod-only)")
 	fs.StringVar(&configPath, "config", "", "path to JSON config file (blocklist)")
 	var sfxPath string
 	fs.StringVar(&sfxPath, "sfx-config", "sfx.toml", "soundboard TOML (registers a !command per sound); optional")
+	fs.StringVar(&c.TwitchClientID, "twitch-client-id", os.Getenv("TWITCH_CLIENT_ID"), "Twitch app client id (env TWITCH_CLIENT_ID); enables chat replies")
+	fs.StringVar(&c.TwitchSecret, "twitch-client-secret", os.Getenv("TWITCH_CLIENT_SECRET"), "Twitch app client secret (env TWITCH_CLIENT_SECRET)")
+	fs.StringVar(&c.TokenStore, "twitch-token-store", "bot.tokens.json", "path to the OAuth token store written by bot-auth")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -88,5 +96,6 @@ func LoadConfig(args []string) (Config, error) {
 	c.Cmds.Pause = strings.ToLower(c.Cmds.Pause)
 	c.Cmds.Resume = strings.ToLower(c.Cmds.Resume)
 	c.Cmds.Clear = strings.ToLower(c.Cmds.Clear)
+	c.Cmds.SFX = strings.ToLower(c.Cmds.SFX)
 	return c, nil
 }

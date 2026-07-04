@@ -19,6 +19,17 @@ func TestParsePrivmsg(t *testing.T) {
 	}
 }
 
+func TestParseCapturesReplyTags(t *testing.T) {
+	line := `@id=abc-123;user-id=555;room-id=999;display-name=Bob;mod=0 :bob!bob@bob.tmi.twitch.tv PRIVMSG #streamer :!sfx`
+	m, ok := parsePrivmsg(line)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if m.ID != "abc-123" || m.UserID != "555" || m.RoomID != "999" {
+		t.Errorf("id/user-id/room-id = %q/%q/%q", m.ID, m.UserID, m.RoomID)
+	}
+}
+
 func TestParseBroadcaster(t *testing.T) {
 	line := `@badges=broadcaster/1;display-name=Streamer;mod=0 :streamer!streamer@streamer.tmi.twitch.tv PRIVMSG #streamer :!skip`
 	m, ok := parsePrivmsg(line)

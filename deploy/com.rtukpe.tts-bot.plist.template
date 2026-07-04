@@ -29,6 +29,14 @@
          installing shell's $TTS_TOKEN by deploy/service.sh. Empty = no auth. -->
     <key>TTS_TOKEN</key>
     <string>__TTS_TOKEN__</string>
+    <!-- Twitch app credentials that enable chat replies; substituted from the
+         installing shell by deploy/service.sh. Empty = replies disabled (the bot
+         still reads chat + drives TTS). The refresh token lives in the repo's
+         bot.tokens.json (written by `mise run bot:auth`). -->
+    <key>TWITCH_CLIENT_ID</key>
+    <string>__TWITCH_CLIENT_ID__</string>
+    <key>TWITCH_CLIENT_SECRET</key>
+    <string>__TWITCH_CLIENT_SECRET__</string>
   </dict>
 
   <key>RunAtLoad</key>

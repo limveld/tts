@@ -13,6 +13,9 @@ type ChatMessage struct {
 	IsSub         bool
 	IsVIP         bool
 	Emotes        string // raw IRC `emotes` tag (positions into Text)
+	ID            string // message id (`id` tag) — for reply_parent_message_id
+	UserID        string // sender's user id (`user-id` tag) — stable per-user key
+	RoomID        string // channel/broadcaster id (`room-id` tag) — Helix broadcaster_id
 }
 
 // parsePrivmsg parses one raw IRCv3 line. ok is false for non-PRIVMSG lines.
@@ -80,6 +83,9 @@ func parsePrivmsg(line string) (ChatMessage, bool) {
 	m.IsSub = tags["subscriber"] == "1"
 	m.IsVIP = tags["vip"] == "1"
 	m.Emotes = tags["emotes"]
+	m.ID = tags["id"]
+	m.UserID = tags["user-id"]
+	m.RoomID = tags["room-id"]
 	m.IsBroadcaster = strings.Contains(tags["badges"], "broadcaster/") || m.User == strings.ToLower(channel)
 	if m.IsBroadcaster {
 		m.IsMod = true // broadcaster is implicitly a mod

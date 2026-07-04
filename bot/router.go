@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"sort"
 	"strings"
 )
 
@@ -12,6 +13,7 @@ type Commands struct {
 	Pause     string
 	Resume    string
 	Clear     string
+	SFX       string
 }
 
 // Router turns parsed chat messages into TTS server calls.
@@ -23,6 +25,7 @@ type Router struct {
 	cooldown *Cooldown
 	sanitize func(text string) (string, bool) // wraps Clean with blocklist+maxChars
 	tts      TTS
+	chat     Chat // may be nil when the bot isn't authenticated (replies disabled)
 	logger   *log.Logger
 }
 
@@ -42,9 +45,13 @@ func (r *Router) Handle(m ChatMessage) {
 	}
 	cmd = strings.ToLower(cmd)
 
-	// Standalone mod-only control commands.
 	switch cmd {
+	case r.cmds.SFX:
+		r.listSounds(m)
+		return
+
 	case r.cmds.Skip, r.cmds.Pause, r.cmds.Resume, r.cmds.Clear:
+		// Standalone mod-only control commands.
 		if m.IsMod || m.IsBroadcaster {
 			r.control(cmd, m)
 		}
@@ -127,4 +134,33 @@ func (r *Router) control(cmd string, m ChatMessage) {
 		return
 	}
 	r.logger.Printf("%s by %s", cmd, m.User)
+}
+
+// listSounds replies in chat with the available sound commands. Requires an
+// authenticated chat sender; shares the TTS per-user cooldown (mods exempt).
+func (r *Router) listSounds(m ChatMessage) {
+	if r.chat == nil {
+		r.logger.Printf("!sfx: replies not configured — run 'mise run bot:auth'")
+		return
+	}
+	if !(m.IsMod || m.IsBroadcaster) && !r.cooldown.Allow(m.User) {
+		r.logger.Printf("cooldown: ignoring %s", m.User)
+		return
+	}
+
+	keys := make([]string, 0, len(r.sfx))
+	for k := range r.sfx {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	msg := "No sounds configured."
+	if len(keys) > 0 {
+		msg = "Sounds: " + strings.Join(keys, ", ")
+	}
+	if err := r.chat.Reply(m.RoomID, m.ID, msg); err != nil {
+		r.logger.Printf("!sfx reply error: %v", err)
+		return
+	}
+	r.logger.Printf("!sfx list for %s", m.User)
 }

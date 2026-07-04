@@ -26,9 +26,18 @@ func (f *fakeTTS) Resume() error         { f.controls = append(f.controls, "resu
 func (f *fakeTTS) Clear() error          { f.controls = append(f.controls, "clear"); return nil }
 func (f *fakeTTS) Skip() error           { f.controls = append(f.controls, "skip"); return nil }
 
+type replyCall struct{ broadcasterID, parentID, text string }
+
+type fakeChat struct{ replies []replyCall }
+
+func (f *fakeChat) Reply(broadcasterID, parentID, text string) error {
+	f.replies = append(f.replies, replyCall{broadcasterID, parentID, text})
+	return nil
+}
+
 func newTestRouter(tts TTS) *Router {
 	return &Router{
-		cmds:     Commands{TTSPrefix: "!tts", Skip: "!skip", Pause: "!pause", Resume: "!resume", Clear: "!clear"},
+		cmds:     Commands{TTSPrefix: "!tts", Skip: "!skip", Pause: "!pause", Resume: "!resume", Clear: "!clear", SFX: "!sfx"},
 		minRole:  "everyone",
 		sfx:      map[string]struct{}{"!airhorn": {}, "!bruh": {}},
 		voices:   &VoiceResolver{codes: defaultVoiceCodes(), rnd: rand.New(rand.NewSource(1))},
@@ -71,6 +80,40 @@ func TestRouterSFX(t *testing.T) {
 	}
 	if len(f.says) != 0 {
 		t.Errorf("sfx should not speak; says=%v", f.says)
+	}
+}
+
+func TestRouterSFXList(t *testing.T) {
+	f := &fakeTTS{}
+	r := newTestRouter(f)
+	chat := &fakeChat{}
+	r.chat = chat
+
+	m := msg("bob", "!sfx", false)
+	m.RoomID, m.ID = "room9", "msg1"
+	r.Handle(m)
+
+	if len(chat.replies) != 1 {
+		t.Fatalf("replies=%d want 1", len(chat.replies))
+	}
+	got := chat.replies[0]
+	if got.broadcasterID != "room9" || got.parentID != "msg1" {
+		t.Errorf("reply target=%+v want room9/msg1", got)
+	}
+	if got.text != "Sounds: !airhorn, !bruh" { // sorted, comma-joined
+		t.Errorf("reply text=%q", got.text)
+	}
+	if len(f.sfx) != 0 {
+		t.Errorf("!sfx should not play a sound; sfx=%v", f.sfx)
+	}
+}
+
+func TestRouterSFXListWithoutChatIsNoop(t *testing.T) {
+	f := &fakeTTS{}
+	r := newTestRouter(f) // chat is nil (bot not authenticated)
+	r.Handle(msg("bob", "!sfx", false))
+	if len(f.sfx)+len(f.says)+len(f.controls) != 0 {
+		t.Error("!sfx with no chat sender should do nothing")
 	}
 }
 

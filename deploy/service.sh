@@ -16,15 +16,21 @@
 # Env overrides (read from the installing shell — launchd never sources ~/.zshrc):
 #   both:   TTS_TOKEN (baked into the plist's EnvironmentVariables; empty = no auth)
 #   server: TTS_ADDR (default 127.0.0.1:8080)
-#   bot:    TTS_CHANNEL (required for install), TTS_URL (default http://127.0.0.1:8080)
+#   bot:    TTS_CHANNEL (required for install), TTS_URL (default http://127.0.0.1:8080),
+#           TWITCH_CLIENT_ID / TWITCH_CLIENT_SECRET (enable chat replies; empty = disabled)
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOGDIR="$HOME/Library/Logs"
 DOMAIN="gui/$(id -u)"
 
-# Bearer token from the current environment, escaped so sed treats it literally.
-TOKEN_ESC=$(printf '%s' "${TTS_TOKEN:-}" | sed 's/[&|\\]/\\&/g')
+# sed-escape a value so it's treated literally in the plist substitution.
+esc() { printf '%s' "${1:-}" | sed 's/[&|\\]/\\&/g'; }
+
+# Bearer token + Twitch app credentials from the current environment.
+TOKEN_ESC=$(esc "${TTS_TOKEN:-}")
+TWITCH_ID_ESC=$(esc "${TWITCH_CLIENT_ID:-}")
+TWITCH_SECRET_ESC=$(esc "${TWITCH_CLIENT_SECRET:-}")
 
 TARGET="${1:-}"
 CMD="${2:-}"
@@ -58,6 +64,8 @@ case "$TARGET" in
       sed -e "s|__REPO__|$REPO|g" -e "s|__LOGDIR__|$LOGDIR|g" \
           -e "s|__CHANNEL__|$CHANNEL|g" -e "s|__TTS_URL__|$TTS_URL|g" \
           -e "s|__TTS_TOKEN__|$TOKEN_ESC|g" \
+          -e "s|__TWITCH_CLIENT_ID__|$TWITCH_ID_ESC|g" \
+          -e "s|__TWITCH_CLIENT_SECRET__|$TWITCH_SECRET_ESC|g" \
           "$REPO/deploy/$LABEL.plist.template"
     }
     health() { echo "  (bot has no HTTP endpoint; check logs)"; }

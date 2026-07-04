@@ -9,3 +9,6 @@ mise.local.toml
 # and `mise run sfx:fetch` re-downloads them.
 /sfx/*
 !/sfx/.gitkeep
+
+# Bot OAuth tokens (secret/state written by `mise run bot:auth`).
+/bot.tokens.json

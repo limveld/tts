@@ -1,6 +1,6 @@
 # Native Go bot: make it reply-capable + replace StreamElements
 
-Status: proposal — deferred (exploration)
+Status: in progress — Stage 1 (auth + reply) done
 Type: task
 Created: 2026-07-03
 
@@ -86,3 +86,35 @@ Router grows to: TTS commands → existing `/say`; custom/points/admin commands 
 - Twitch: [Send/Receive Chat](https://dev.twitch.tv/docs/chat/send-receive-messages/), [Get Chatters](https://dev.twitch.tv/docs/api/reference/#get-chatters), [OAuth code flow](https://dev.twitch.tv/docs/authentication/getting-tokens-oauth/), [refresh](https://dev.twitch.tv/docs/authentication/refresh-tokens/), [scopes](https://dev.twitch.tv/docs/authentication/scopes/), [IRC migration](https://dev.twitch.tv/docs/chat/irc-migration/).
 - Streamer.bot model (reference only): [triggers](https://docs.streamer.bot/api/triggers), [sub-actions](https://docs.streamer.bot/api/sub-actions), [WebSocket API](https://docs.streamer.bot/api/websocket), [macOS caveats](https://docs.streamer.bot/get-started/installation/macos).
 - Go: `modernc.org/sqlite` (pure-Go); `nicklaw5/helix` optional (we can hand-roll the few REST calls std-lib).
+
+## Progress
+
+### 2026-07-04 — Stage 1 (auth + reply) implemented
+
+Motivated by the WIP `!sfx` command needing to *reply* in chat (the bot was read-only).
+Built the authenticated-reply foundation, std-lib `net/http` only (no new deps — SQLite
+is deferred to Stages 2–4):
+
+- **`twitch/` package** — OAuth Authorization Code flow (`AuthCodeURL`/`Exchange`/refresh/
+  `Validate`), Helix **Send Chat Message** with **401 → refresh → retry**, and a
+  0600 JSON token `Store`. Tested against `httptest` (never live Twitch).
+- **`cmd/bot-auth`** — one-time consent: prints the URL, catches `?code=` on a localhost
+  listener (with `state` CSRF check), exchanges + validates, saves the token. Wired as
+  `mise run bot:auth`.
+- **Bot** — `parse.go` now surfaces `id`/`user-id`/`room-id` (already on the wire via the
+  tags cap); a `Chat` seam (interface, faked in tests) mirrors the `TTS` seam; `main.go`
+  builds a `chatSender` when creds + a saved token exist, else nil (bot still runs
+  read-only). The `!sfx` branch now **replies** with the sorted sound list (threaded to
+  the caller, shared TTS cooldown).
+- **Deploy** — `TWITCH_CLIENT_ID`/`_SECRET` flow shell → plist → process like `TTS_TOKEN`;
+  `bot.tokens.json` git-ignored.
+
+Account-agnostic: Helix sends as whichever account completes consent (dedicated bot
+account recommended; main account works too). Manual prerequisites remain the user's:
+register a Confidential Twitch app (redirect `http://localhost:3000`), export the
+client id/secret, run `mise run bot:auth` once.
+
+`go build/vet/test ./...` clean. Live reply-in-chat is unverifiable here (needs the
+user's Twitch app + browser consent). **Deferred:** Stage 2 (custom commands + timers)
+and Stage 3 (loyalty points), each adding `modernc.org/sqlite` on this `Chat`/`Sender`
+seam.

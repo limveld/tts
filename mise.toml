@@ -75,6 +75,14 @@ description = "Run the bot in the foreground (set TTS_CHANNEL=<your_channel>)"
 depends = ["bot:build"]
 run = './bin/tts-bot -channel "${TTS_CHANNEL:?set TTS_CHANNEL to your twitch channel}"'
 
+[tasks."bot:auth"]
+description = "One-time Twitch OAuth consent so the bot can reply (set TWITCH_CLIENT_ID/SECRET)"
+run = '''
+: "${TWITCH_CLIENT_ID:?set TWITCH_CLIENT_ID to your Twitch app id}"
+: "${TWITCH_CLIENT_SECRET:?set TWITCH_CLIENT_SECRET to your Twitch app secret}"
+go run ./cmd/bot-auth
+'''
+
 [tasks."bot:service:install"]
 description = "Install & start the bot launchd service (set TTS_CHANNEL first)"
 depends = ["bot:build"]

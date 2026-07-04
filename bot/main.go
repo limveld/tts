@@ -12,6 +12,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"tts/twitch"
 )
 
 func main() {
@@ -33,6 +35,7 @@ func main() {
 			return Clean(text, cfg.Blocklist, cfg.MaxChars)
 		},
 		tts:    NewTTSClient(cfg.TTSURL, cfg.TTSToken),
+		chat:   buildChat(cfg, logger),
 		logger: logger,
 	}
 
@@ -44,4 +47,27 @@ func main() {
 		cfg.Channel, cfg.TTSURL, cfg.Cooldown, cfg.MinRole, len(cfg.SFX))
 	irc.Run(ctx)
 	logger.Printf("shutting down")
+}
+
+// buildChat returns a Chat sender when Twitch credentials and a saved token are
+// both present; otherwise nil, so the bot still runs read-only (replies just
+// no-op with a log line until `mise run bot:auth` is done).
+func buildChat(cfg Config, logger *log.Logger) Chat {
+	if cfg.TwitchClientID == "" || cfg.TwitchSecret == "" {
+		return nil
+	}
+	store := twitch.NewStore(cfg.TokenStore)
+	tok, err := store.Load()
+	if err != nil {
+		logger.Printf("twitch: token store: %v", err)
+		return nil
+	}
+	if tok == nil {
+		logger.Printf("twitch: no saved token — run 'mise run bot:auth' to enable chat replies")
+		return nil
+	}
+	client := twitch.NewClient(cfg.TwitchClientID, cfg.TwitchSecret, store)
+	client.SetToken(tok)
+	logger.Printf("twitch: chat replies enabled as %s", tok.Login)
+	return NewChatSender(client)
 }
