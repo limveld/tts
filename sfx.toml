@@ -16,6 +16,30 @@
 file = "im-gonna-come_6HehWm4.mp3"
 url  = "https://www.myinstants.com/media/sounds/im-gonna-come_6HehWm4.mp3"
 
+[sounds.goat]
+file = "thats-why-hes-the-goat-the-goat.mp3"
+url = "https://www.myinstants.com/media/sounds/thats-why-hes-the-goat-the-goat.mp3"
+
+[sounds.tres]
+file = "mohg-tres.mp3"
+url = "https://www.myinstants.com/media/sounds/mohg-tres.mp3"
+
+[[sounds.sleep.clips]]
+file = "meme-sleep.mp3"
+url = "https://www.myinstants.com/media/sounds/meme-sleep.mp3"
+
+[[sounds.sleep.clips]]
+file = "go-to-sleep-real-version.mp3"
+url = "https://www.myinstants.com/media/sounds/go-to-sleep-real-version.mp3"
+
+[sounds.du]
+file = "du-bist-gut-genug_5d9IXZw.mp3"
+url = "https://www.myinstants.com/media/sounds/du-bist-gut-genug_5d9IXZw.mp3"
+
+[sounds.fail]
+file = "spongebob-fail.mp3"
+url = "https://www.myinstants.com/media/sounds/spongebob-fail.mp3"
+
 # Example of one command with several clips (a random one plays per use):
 # [[sounds.airhorn.clips]]
 # file = "airhorn1.mp3"
