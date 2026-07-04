@@ -52,6 +52,12 @@ run = "bash deploy/service.sh server status"
 description = "Follow the TTS server error log"
 run = "bash deploy/service.sh server logs"
 
+# ---- sfx --------------------------------------------------------------------
+
+[tasks."sfx:fetch"]
+description = "Download soundboard clips declared in sfx.toml into sfx/ (idempotent)"
+run = "go run ./cmd/sfx-fetch"
+
 # ---- bot -------------------------------------------------------------------
 
 [tasks."bot:build"]

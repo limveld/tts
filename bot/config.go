@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 	"time"
+
+	"tts/sfxlib"
 )
 
 // Config is the resolved bot configuration.
@@ -19,6 +22,7 @@ type Config struct {
 	MinRole   string
 	Cmds      Commands
 	Blocklist []string
+	SFX       map[string]struct{} // sound commands (lowercased, with leading "!")
 }
 
 // LoadConfig parses flags/env and an optional JSON config file (blocklist).
@@ -38,6 +42,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&c.Cmds.Resume, "cmd-resume", "!resume", "resume command (mod-only)")
 	fs.StringVar(&c.Cmds.Clear, "cmd-clear", "!clear", "clear command (mod-only)")
 	fs.StringVar(&configPath, "config", "", "path to JSON config file (blocklist)")
+	var sfxPath string
+	fs.StringVar(&sfxPath, "sfx-config", "sfx.toml", "soundboard TOML (registers a !command per sound); optional")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -59,6 +65,21 @@ func LoadConfig(args []string) (Config, error) {
 			return c, fmt.Errorf("parsing config: %w", err)
 		}
 		c.Blocklist = fileCfg.Blocklist
+	}
+
+	// Soundboard: register a "!<name>" command per sound. A missing file just
+	// means no SFX (opt-in); a present-but-invalid file is a real error.
+	if _, err := os.Stat(sfxPath); err == nil {
+		lib, err := sfxlib.Load(sfxPath)
+		if err != nil {
+			return c, fmt.Errorf("parsing sfx config: %w", err)
+		}
+		c.SFX = make(map[string]struct{}, len(lib))
+		for name := range lib {
+			c.SFX["!"+strings.ToLower(name)] = struct{}{}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return c, fmt.Errorf("reading sfx config: %w", err)
 	}
 
 	// Chat is matched lowercased, so normalize command words.

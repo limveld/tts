@@ -1,0 +1,25 @@
+# Soundboard: each entry becomes a chat command that plays a sound clip through
+# the same queue / player / OBS overlay as TTS (e.g. [sounds.gonnacome] -> !gonnacome).
+#
+# A command is either a SINGLE clip (file + url) or SEVERAL clips
+# ([[sounds.<name>.clips]]); with several, the server plays a RANDOM one each time.
+#
+#   file : local filename under the sfx/ dir that the server plays.
+#   url  : the myinstants media URL, used by `mise run sfx:fetch` to download the
+#          file and kept for provenance. Get it from the instant page's play
+#          button (data-url="/media/sounds/<slug>.mp3") — the slug has a random
+#          suffix, so read it from the button rather than guessing.
+#
+# After editing: run `mise run sfx:fetch`, then restart the server and bot.
+
+[sounds.c]
+file = "im-gonna-come_6HehWm4.mp3"
+url  = "https://www.myinstants.com/media/sounds/im-gonna-come_6HehWm4.mp3"
+
+# Example of one command with several clips (a random one plays per use):
+# [[sounds.airhorn.clips]]
+# file = "airhorn1.mp3"
+# url  = "https://www.myinstants.com/media/sounds/airhorn1.mp3"
+# [[sounds.airhorn.clips]]
+# file = "airhorn2.mp3"
+# url  = "https://www.myinstants.com/media/sounds/airhorn2.mp3"

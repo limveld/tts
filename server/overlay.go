@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -178,20 +179,27 @@ func (o *Overlay) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleClip serves tmpDir/tts-<id>.wav. id is validated numeric (no traversal).
+// handleClip serves tmpDir/tts-<id><ext> (e.g. .wav for TTS, .mp3 for SFX). The
+// id must parse as an integer — which also blocks path traversal, since any
+// separator in the request leaves a non-numeric id.
 func (o *Overlay) handleClip(w http.ResponseWriter, r *http.Request) {
 	if !o.authed(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/overlay/clip/"), ".wav")
-	id, err := strconv.ParseInt(name, 10, 64)
+	base := strings.TrimPrefix(r.URL.Path, "/overlay/clip/")
+	ext := filepath.Ext(base) // ".wav" / ".mp3"
+	id, err := strconv.ParseInt(strings.TrimSuffix(base, ext), 10, 64)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "audio/wav")
-	http.ServeFile(w, r, filepath.Join(o.tmpDir, fmt.Sprintf("tts-%d.wav", id)))
+	ct := mime.TypeByExtension(ext)
+	if ct == "" {
+		ct = "audio/wav"
+	}
+	w.Header().Set("Content-Type", ct)
+	http.ServeFile(w, r, filepath.Join(o.tmpDir, fmt.Sprintf("tts-%d%s", id, ext)))
 }
 
 func (o *Overlay) handleDone(w http.ResponseWriter, r *http.Request) {
@@ -221,16 +229,26 @@ func NewBrowserPlayer(o *Overlay, logger *log.Logger) *BrowserPlayer {
 	return &BrowserPlayer{overlay: o, logger: logger}
 }
 
-func (p *BrowserPlayer) Play(ctx context.Context, id int64, wav string) error {
-	url := fmt.Sprintf("/overlay/clip/%d.wav", id)
-	// Bound the wait by the clip's own length (+ margin) so a disconnect can't
-	// stall the queue indefinitely, without cutting long clips short.
-	maxWait := estimateWavDuration(wav) + 10*time.Second
+func (p *BrowserPlayer) Play(ctx context.Context, id int64, clip string) error {
+	ext := filepath.Ext(clip)
+	if ext == "" {
+		ext = ".wav"
+	}
+	url := fmt.Sprintf("/overlay/clip/%d%s", id, ext)
+	// Bound the wait so a disconnect can't stall the queue indefinitely. For our
+	// WAVs we can size it from the file; compressed clips (sfx mp3) don't map
+	// linearly, so use a generous fixed cap — the page still acks early on
+	// <audio> "ended", so this is only a safety net.
+	maxWait := 60 * time.Second
+	if ext == ".wav" {
+		maxWait = estimateWavDuration(clip) + 10*time.Second
+	}
 	return p.overlay.Play(ctx, id, url, maxWait)
 }
 
-// estimateWavDuration estimates a clip's length from its file size (our clips
-// are 24 kHz mono 16-bit PCM). Falls back to 60s if the file can't be stat'd.
+// estimateWavDuration estimates a clip's length from its file size (our TTS
+// clips are 24 kHz mono 16-bit PCM). Falls back to 60s if the file can't be
+// stat'd.
 func estimateWavDuration(wav string) time.Duration {
 	fi, err := os.Stat(wav)
 	if err != nil {

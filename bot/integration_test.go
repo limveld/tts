@@ -18,16 +18,22 @@ import (
 func TestIntegrationRawIRCToHTTP(t *testing.T) {
 	var mu sync.Mutex
 	var sayBodies []map[string]string
+	var sfxBodies []map[string]string
 	var paths []string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		paths = append(paths, r.URL.Path)
-		if r.URL.Path == "/say" {
+		switch r.URL.Path {
+		case "/say":
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			sayBodies = append(sayBodies, body)
+		case "/sfx":
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			sfxBodies = append(sfxBodies, body)
 		}
 		w.WriteHeader(http.StatusAccepted)
 	}))
@@ -36,6 +42,7 @@ func TestIntegrationRawIRCToHTTP(t *testing.T) {
 	r := &Router{
 		cmds:     Commands{TTSPrefix: "!tts", Skip: "!skip", Pause: "!pause", Resume: "!resume", Clear: "!clear"},
 		minRole:  "everyone",
+		sfx:      map[string]struct{}{"!airhorn": {}},
 		voices:   &VoiceResolver{codes: defaultVoiceCodes(), rnd: rand.New(rand.NewSource(1))},
 		cooldown: NewCooldown(30 * time.Second),
 		sanitize: func(text string) (string, bool) { return Clean(text, nil, 200) },
@@ -46,6 +53,8 @@ func TestIntegrationRawIRCToHTTP(t *testing.T) {
 	lines := []string{
 		// "!ttsb Kappa hello": the Kappa emote occupies code points 6-10.
 		`@display-name=Bob;mod=0;emotes=25:6-10 :bob!bob@bob.tmi.twitch.tv PRIVMSG #chan :!ttsb Kappa hello`,
+		// a sound command (different user, so the shared cooldown doesn't block it)
+		`@display-name=Sam;mod=0 :sam!sam@sam.tmi.twitch.tv PRIVMSG #chan :!airhorn`,
 		// mod skip
 		`@display-name=Mod;mod=1 :mod!mod@mod.tmi.twitch.tv PRIVMSG #chan :!skip`,
 		// non-mod skip is ignored
@@ -64,11 +73,17 @@ func TestIntegrationRawIRCToHTTP(t *testing.T) {
 	if len(sayBodies) != 1 {
 		t.Fatalf("expected 1 /say, got %d", len(sayBodies))
 	}
-	if sayBodies[0]["voice"] != "af_bella" {
-		t.Errorf("voice=%q want af_bella", sayBodies[0]["voice"])
+	if wantB := defaultVoiceCodes()["b"]; sayBodies[0]["voice"] != wantB { // "!ttsb" -> code b
+		t.Errorf("voice=%q want %q", sayBodies[0]["voice"], wantB)
 	}
 	if sayBodies[0]["text"] != "hello" { // emote stripped, prefix removed
 		t.Errorf("text=%q want %q", sayBodies[0]["text"], "hello")
+	}
+	if len(sfxBodies) != 1 {
+		t.Fatalf("expected 1 /sfx, got %d", len(sfxBodies))
+	}
+	if sfxBodies[0]["name"] != "airhorn" {
+		t.Errorf("sfx name=%q want airhorn", sfxBodies[0]["name"])
 	}
 	skips := 0
 	for _, p := range paths {

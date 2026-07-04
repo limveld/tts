@@ -26,6 +26,7 @@ func main() {
 	router := &Router{
 		cmds:     cfg.Cmds,
 		minRole:  cfg.MinRole,
+		sfx:      cfg.SFX,
 		voices:   &VoiceResolver{codes: defaultVoiceCodes(), rnd: rnd},
 		cooldown: NewCooldown(cfg.Cooldown),
 		sanitize: func(text string) (string, bool) {
@@ -39,8 +40,8 @@ func main() {
 	defer stop()
 
 	irc := &IRCClient{channel: cfg.Channel, logger: logger, rnd: rnd, handle: router.Handle}
-	logger.Printf("tts-bot: channel=#%s tts=%s cooldown=%s min-role=%s",
-		cfg.Channel, cfg.TTSURL, cfg.Cooldown, cfg.MinRole)
+	logger.Printf("tts-bot: channel=#%s tts=%s cooldown=%s min-role=%s sfx=%d",
+		cfg.Channel, cfg.TTSURL, cfg.Cooldown, cfg.MinRole, len(cfg.SFX))
 	irc.Run(ctx)
 	logger.Printf("shutting down")
 }

@@ -28,8 +28,18 @@ func TestCleanStripsURL(t *testing.T) {
 }
 
 func TestCleanCollapse(t *testing.T) {
-	if got, _ := Clean("heyyyyyy heyyyyyy lol lol lol", nil, 200); got != "heyyy lol" {
-		t.Errorf("collapse = %q want %q", got, "heyyy lol")
+	// Character runs are capped at 10.
+	if got, _ := Clean("heyyyyyyyyyyyyyy", nil, 200); got != "heyyyyyyyyyy" {
+		t.Errorf("char collapse = %q want %q", got, "heyyyyyyyyyy")
+	}
+	// Consecutive duplicate words are capped at 10, too.
+	want := strings.TrimSpace(strings.Repeat("lol ", 10))
+	if got, _ := Clean(strings.Repeat("lol ", 15), nil, 200); got != want {
+		t.Errorf("word collapse = %q want 10x lol", got)
+	}
+	// Under the limits, text is left intact.
+	if got, _ := Clean("heyyy heyyy lol", nil, 200); got != "heyyy heyyy lol" {
+		t.Errorf("collapse = %q want unchanged", got)
 	}
 }
 

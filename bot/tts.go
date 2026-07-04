@@ -13,6 +13,7 @@ import (
 // can substitute a fake).
 type TTS interface {
 	Say(text, voice string) error
+	SFX(name string) error
 	Pause() error
 	Resume() error
 	Clear() error
@@ -37,6 +38,11 @@ func NewTTSClient(baseURL, token string) *TTSClient {
 func (c *TTSClient) Say(text, voice string) error {
 	body, _ := json.Marshal(map[string]string{"text": text, "voice": voice})
 	return c.post("/say", body)
+}
+
+func (c *TTSClient) SFX(name string) error {
+	body, _ := json.Marshal(map[string]string{"name": name})
+	return c.post("/sfx", body)
 }
 
 func (c *TTSClient) Pause() error  { return c.post("/pause", nil) }

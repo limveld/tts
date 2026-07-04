@@ -55,8 +55,8 @@ func removeEmotes(text, emotes string) string {
 	return b.String()
 }
 
-// collapseRepeats squashes runs of the same character (to at most 10) and drops
-// consecutive duplicate words, keeping clips short and legible.
+// collapseRepeats squashes runs of the same character and runs of the same
+// consecutive word to at most 10 each, keeping clips short and legible.
 func collapseRepeats(text string) string {
 	var b strings.Builder
 	var last rune
@@ -75,11 +75,16 @@ func collapseRepeats(text string) string {
 
 	words := strings.Fields(s)
 	out := make([]string, 0, len(words))
+	run = 0
 	for i, w := range words {
 		if i > 0 && strings.EqualFold(w, words[i-1]) {
-			continue
+			run++
+		} else {
+			run = 1
 		}
-		out = append(out, w)
+		if run <= 10 {
+			out = append(out, w)
+		}
 	}
 	return strings.Join(out, " ")
 }

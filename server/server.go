@@ -12,7 +12,8 @@ import (
 // Server exposes the queue over HTTP.
 type Server struct {
 	queue    *Queue
-	overlay  *Overlay // may be nil; when set, /overlay* routes are registered
+	overlay  *Overlay  // may be nil; when set, /overlay* routes are registered
+	sfx      *sfxBoard // may be nil; when nil, /sfx returns 404 (not configured)
 	token    string
 	maxChars int
 	logger   *log.Logger
@@ -21,8 +22,8 @@ type Server struct {
 // NewServer builds the HTTP layer. If token is non-empty, every route except
 // /healthz (and the overlay, which authenticates via a ?token= query param)
 // requires the bearer token.
-func NewServer(q *Queue, overlay *Overlay, token string, maxChars int, logger *log.Logger) *Server {
-	return &Server{queue: q, overlay: overlay, token: token, maxChars: maxChars, logger: logger}
+func NewServer(q *Queue, overlay *Overlay, sfx *sfxBoard, token string, maxChars int, logger *log.Logger) *Server {
+	return &Server{queue: q, overlay: overlay, sfx: sfx, token: token, maxChars: maxChars, logger: logger}
 }
 
 // controlResponse is the body returned by the control endpoints: the queue
@@ -38,6 +39,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/say", s.auth(s.post(s.handleSay)))
+	mux.HandleFunc("/sfx", s.auth(s.post(s.handleSfx)))
 	mux.HandleFunc("/pause", s.auth(s.post(s.handlePause)))
 	mux.HandleFunc("/resume", s.auth(s.post(s.handleResume)))
 	mux.HandleFunc("/clear", s.auth(s.post(s.handleClear)))
@@ -121,6 +123,48 @@ func (s *Server) handleSay(w http.ResponseWriter, r *http.Request) {
 		"position":  position,
 		"truncated": truncated,
 	})
+}
+
+func (s *Server) handleSfx(w http.ResponseWriter, r *http.Request) {
+	if s.sfx == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "sfx not configured"})
+		return
+	}
+	var name string
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		name = body.Name
+	} else {
+		name = r.FormValue("name")
+	}
+
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+	path, ok := s.sfx.pick(name)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sound"})
+		return
+	}
+
+	id, position, err := s.queue.EnqueueSFX(name, path)
+	if err != nil {
+		if errors.Is(err, ErrQueueFull) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "queue is full"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"id": id, "position": position})
 }
 
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {

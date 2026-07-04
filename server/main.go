@@ -10,12 +10,15 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"tts/sfxlib"
 )
 
 func main() {
@@ -31,6 +34,8 @@ func main() {
 	maxQueue := flag.Int("max-queue", 100, "maximum pending queue length")
 	tmpDir := flag.String("tmpdir", filepath.Join(os.TempDir(), "tts-server"), "directory for temporary WAV files")
 	playerMode := flag.String("player", "browser", "playback backend: browser (OBS Browser Source overlay) or vlc (local speakers)")
+	sfxConfig := flag.String("sfx-config", "sfx.toml", "soundboard TOML (command -> clip); optional")
+	sfxDir := flag.String("sfx-dir", "sfx", "directory holding the downloaded soundboard clips")
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "", log.LstdFlags)
@@ -81,7 +86,18 @@ func main() {
 	queue := NewQueue(engine, p, *tmpDir, *maxQueue, logger)
 	go queue.Run(ctx)
 
-	server := NewServer(queue, overlay, *token, *maxChars, logger)
+	// Optional soundboard: chat commands that play pre-recorded clips through the
+	// same queue/player. Absent config just disables /sfx.
+	var board *sfxBoard
+	if lib, err := loadSFX(*sfxConfig); err != nil {
+		logger.Fatalf("sfx config %s: %v", *sfxConfig, err)
+	} else if lib != nil {
+		rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+		board = newSFXBoard(lib, *sfxDir, rnd, logger)
+		logger.Printf("sfx: %d sound command(s) loaded from %s (clips in %s)", board.count(), *sfxConfig, *sfxDir)
+	}
+
+	server := NewServer(queue, overlay, board, *token, *maxChars, logger)
 	httpServer := &http.Server{Addr: *addr, Handler: server.Handler()}
 
 	// Shut the HTTP server down when a signal arrives.
@@ -102,6 +118,18 @@ func main() {
 		logger.Fatalf("http server: %v", err)
 	}
 	logger.Printf("shutting down")
+}
+
+// loadSFX loads the soundboard config, treating a missing file as "no
+// soundboard" (nil, nil) so the feature is opt-in; a present-but-invalid file is
+// a real error.
+func loadSFX(path string) (map[string][]sfxlib.Clip, error) {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	return sfxlib.Load(path)
 }
 
 // mustExist resolves path to an absolute path and exits if it does not exist.

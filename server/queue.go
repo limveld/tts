@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -13,11 +14,15 @@ import (
 // ErrQueueFull is returned by Enqueue when the pending queue is at capacity.
 var ErrQueueFull = errors.New("queue is full")
 
-// QueueItem is one pending or in-flight TTS request.
+// QueueItem is one pending or in-flight job. Kind "" or "tts" is synthesized
+// from Text/Voice; kind "sfx" plays the pre-recorded file at Src (Text holds the
+// sound's command name, for logging/status).
 type QueueItem struct {
 	ID    int64  `json:"id"`
+	Kind  string `json:"kind,omitempty"`
 	Text  string `json:"text"`
 	Voice string `json:"voice,omitempty"`
+	Src   string `json:"src,omitempty"`
 }
 
 // Status is a snapshot of the queue for the /status endpoint.
@@ -78,6 +83,22 @@ func (q *Queue) Enqueue(text, voice string) (id int64, position int, err error) 
 	return item.ID, len(q.items), nil
 }
 
+// EnqueueSFX appends a sound-effect job (a pre-recorded clip at srcPath, played
+// through the same worker as TTS) and wakes the worker. name is the sound's
+// command, used only for logging/status.
+func (q *Queue) EnqueueSFX(name, srcPath string) (id int64, position int, err error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.items) >= q.maxLen {
+		return 0, 0, ErrQueueFull
+	}
+	q.nextID++
+	item := QueueItem{ID: q.nextID, Kind: "sfx", Text: name, Src: srcPath}
+	q.items = append(q.items, item)
+	q.cond.Signal()
+	return item.ID, len(q.items), nil
+}
+
 // Pause stops the worker from starting new items. A currently-playing item
 // finishes normally.
 func (q *Queue) Pause() {
@@ -128,7 +149,7 @@ func (q *Queue) Status() Status {
 	}
 	return Status{
 		Paused:      q.paused,
-		EngineReady: q.engine.Ready(),
+		EngineReady: q.engine != nil && q.engine.Ready(),
 		QueueLength: len(q.items),
 		Current:     current,
 		Pending:     pending,
@@ -171,8 +192,14 @@ func (q *Queue) Run(ctx context.Context) {
 	}
 }
 
-// process synthesizes and plays a single item, cleaning up its temp WAV.
+// process runs a single item: synthesize (TTS) or fetch the local clip (SFX),
+// then play, cleaning up the temp file.
 func (q *Queue) process(ctx context.Context, item QueueItem) {
+	if item.Kind == "sfx" {
+		q.processSFX(ctx, item)
+		return
+	}
+
 	wav := filepath.Join(q.tmpDir, fmt.Sprintf("tts-%d.wav", item.ID))
 	defer os.Remove(wav)
 
@@ -186,13 +213,55 @@ func (q *Queue) process(ctx context.Context, item QueueItem) {
 	}
 
 	q.logger.Printf("job %d playing", item.ID)
-	if err := q.player.Play(ctx, item.ID, wav); err != nil {
+	q.play(ctx, item.ID, wav)
+}
+
+// processSFX plays a pre-recorded clip. The clip is copied into the temp dir as
+// tts-<id><ext> so the same id-keyed player/overlay path serves it; the copy is
+// removed afterward while the sfx-library original is left untouched.
+func (q *Queue) processSFX(ctx context.Context, item QueueItem) {
+	ext := filepath.Ext(item.Src)
+	if ext == "" {
+		ext = ".mp3"
+	}
+	clip := filepath.Join(q.tmpDir, fmt.Sprintf("tts-%d%s", item.ID, ext))
+	if err := copyFile(item.Src, clip); err != nil {
+		q.logger.Printf("job %d sfx %q copy error: %v", item.ID, item.Text, err)
+		return
+	}
+	defer os.Remove(clip)
+
+	q.logger.Printf("job %d playing sfx %q", item.ID, item.Text)
+	q.play(ctx, item.ID, clip)
+}
+
+// play plays clip and logs the outcome (a skip cancels ctx).
+func (q *Queue) play(ctx context.Context, id int64, clip string) {
+	if err := q.player.Play(ctx, id, clip); err != nil {
 		if ctx.Err() != nil {
-			q.logger.Printf("job %d playback skipped", item.ID)
+			q.logger.Printf("job %d playback skipped", id)
 		} else {
-			q.logger.Printf("job %d playback error: %v", item.ID, err)
+			q.logger.Printf("job %d playback error: %v", id, err)
 		}
 		return
 	}
-	q.logger.Printf("job %d done", item.ID)
+	q.logger.Printf("job %d done", id)
+}
+
+// copyFile copies src to dst (used to stage an sfx clip into the temp dir).
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }

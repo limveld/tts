@@ -17,7 +17,8 @@ type Commands struct {
 // Router turns parsed chat messages into TTS server calls.
 type Router struct {
 	cmds     Commands
-	minRole  string // everyone|sub|vip|mod
+	minRole  string              // everyone|sub|vip|mod
+	sfx      map[string]struct{} // sound commands (lowercased, with the leading "!")
 	voices   *VoiceResolver
 	cooldown *Cooldown
 	sanitize func(text string) (string, bool) // wraps Clean with blocklist+maxChars
@@ -47,6 +48,25 @@ func (r *Router) Handle(m ChatMessage) {
 		if m.IsMod || m.IsBroadcaster {
 			r.control(cmd, m)
 		}
+		return
+	}
+
+	// SFX: standalone sound commands (e.g. "!airhorn"), everyone-eligible and
+	// sharing the TTS per-user cooldown. Takes no args.
+	if _, ok := r.sfx[cmd]; ok {
+		if !r.eligible(m) {
+			return
+		}
+		if !(m.IsMod || m.IsBroadcaster) && !r.cooldown.Allow(m.User) {
+			r.logger.Printf("cooldown: ignoring %s", m.User)
+			return
+		}
+		name := strings.TrimPrefix(cmd, "!")
+		if err := r.tts.SFX(name); err != nil {
+			r.logger.Printf("sfx error: %v", err)
+			return
+		}
+		r.logger.Printf("sfx %q for %s", name, m.User)
 		return
 	}
 

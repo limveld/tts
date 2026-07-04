@@ -4,3 +4,8 @@
 /.venv/
 /bin/
 mise.local.toml
+
+# Downloaded soundboard clips (third-party audio); the mapping lives in sfx.toml
+# and `mise run sfx:fetch` re-downloads them.
+/sfx/*
+!/sfx/.gitkeep
