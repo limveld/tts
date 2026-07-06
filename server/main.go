@@ -36,7 +36,7 @@ func main() {
 	playerMode := flag.String("player", "browser", "playback backend: browser (OBS Browser Source overlay) or vlc (local speakers)")
 	sfxConfig := flag.String("sfx-config", "sfx.toml", "soundboard TOML (command -> clip); optional")
 	sfxDir := flag.String("sfx-dir", "sfx", "directory holding the downloaded soundboard clips")
-	engineName := flag.String("engine", "kokoro", "synthesis engine: kokoro (local sidecar) or chatterbox (external devnen server)")
+	engineName := flag.String("engine", envOr("TTS_ENGINE", "kokoro"), "synthesis engine: kokoro (local sidecar) or chatterbox (external devnen server) (env TTS_ENGINE)")
 	chatterboxURL := flag.String("chatterbox-url", os.Getenv("CHATTERBOX_URL"), "devnen Chatterbox server base URL (env CHATTERBOX_URL); required when -engine chatterbox")
 	chatterboxVoice := flag.String("chatterbox-voice", "", "Chatterbox predefined_voice_id (empty = the devnen server's default)")
 	chatterboxExag := flag.Float64("chatterbox-exaggeration", 0.7, "Chatterbox exaggeration (higher = more dramatic)")
@@ -138,6 +138,16 @@ func main() {
 		logger.Fatalf("http server: %v", err)
 	}
 	logger.Printf("shutting down")
+}
+
+// envOr returns the value of environment variable key, or def when it is unset or
+// empty. Used so flags like -engine can default from the process environment (the
+// launchd plist), matching how -token defaults from TTS_TOKEN.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
 
 // loadSFX loads the soundboard config, treating a missing file as "no

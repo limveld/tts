@@ -31,12 +31,15 @@ esc() { printf '%s' "${1:-}" | sed 's/[&|\\]/\\&/g'; }
 TOKEN_ESC=$(esc "${TTS_TOKEN:-}")
 TWITCH_ID_ESC=$(esc "${TWITCH_CLIENT_ID:-}")
 TWITCH_SECRET_ESC=$(esc "${TWITCH_CLIENT_SECRET:-}")
+# Backend selection for the server (baked into its plist, like TTS_TOKEN).
+ENGINE_ESC=$(esc "${TTS_ENGINE:-}")
+CHATTERBOX_URL_ESC=$(esc "${CHATTERBOX_URL:-http://127.0.0.1:8004}")
 
 TARGET="${1:-}"
 CMD="${2:-}"
 
 usage() {
-  echo "usage: $(basename "$0") <server|bot> <install|uninstall|start|stop|restart|status|logs|render>" >&2
+  echo "usage: $(basename "$0") <server|bot|chatterbox> <install|uninstall|start|stop|restart|status|logs|render>" >&2
   exit 1
 }
 
@@ -45,19 +48,40 @@ case "$TARGET" in
     LABEL="com.rtukpe.tts-server"
     BIN="$REPO/bin/tts-server"
     LOGBASE="tts-server"
+    BUILD_HINT="server:build"
     ADDR="${TTS_ADDR:-127.0.0.1:8080}"
     render() {
       sed -e "s|__REPO__|$REPO|g" -e "s|__LOGDIR__|$LOGDIR|g" -e "s|__ADDR__|$ADDR|g" \
           -e "s|__TTS_TOKEN__|$TOKEN_ESC|g" \
+          -e "s|__TTS_ENGINE__|$ENGINE_ESC|g" -e "s|__CHATTERBOX_URL__|$CHATTERBOX_URL_ESC|g" \
           "$REPO/deploy/$LABEL.plist.template"
     }
     health() { curl -s -m 2 "http://$ADDR/healthz" && echo || echo "  (not responding)"; }
     preflight() { :; }
     ;;
+  chatterbox)
+    LABEL="com.rtukpe.chatterbox"
+    BIN="$REPO/chatterbox-server/venv/bin/python"
+    LOGBASE="chatterbox"
+    BUILD_HINT="chatterbox:setup"
+    CB_PORT="${CHATTERBOX_PORT:-8004}"
+    render() {
+      sed -e "s|__REPO__|$REPO|g" -e "s|__LOGDIR__|$LOGDIR|g" \
+          "$REPO/deploy/$LABEL.plist.template"
+    }
+    health() { curl -s -m 2 "http://127.0.0.1:$CB_PORT/api/model-info" >/dev/null && echo "  ok" || echo "  (not responding)"; }
+    preflight() {
+      if [ ! -f "$REPO/chatterbox-server/server.py" ]; then
+        echo "error: chatterbox submodule missing — run 'git submodule update --init chatterbox-server'" >&2
+        exit 1
+      fi
+    }
+    ;;
   bot)
     LABEL="com.rtukpe.tts-bot"
     BIN="$REPO/bin/tts-bot"
     LOGBASE="tts-bot"
+    BUILD_HINT="bot:build"
     CHANNEL="${TTS_CHANNEL:-}"
     TTS_URL="${TTS_URL:-http://127.0.0.1:8080}"
     render() {
@@ -83,10 +107,23 @@ esac
 
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
+# The server co-manages the chatterbox agent when chatterbox is its backend.
+# install reads the current shell's $TTS_ENGINE (what gets baked into the plist);
+# start/restart read the *installed* server plist so a bare start matches whatever
+# was installed; stop/uninstall tear chatterbox down unconditionally so the model
+# server is never orphaned. Guarded to the server target to avoid recursion.
+SERVER_PLIST="$HOME/Library/LaunchAgents/com.rtukpe.tts-server.plist"
+server_uses_chatterbox_installed() {
+  [ -f "$SERVER_PLIST" ] && grep -A1 '<key>TTS_ENGINE</key>' "$SERVER_PLIST" | grep -qi 'chatterbox'
+}
+
 case "$CMD" in
   install)
+    if [ "$TARGET" = server ] && [ "${TTS_ENGINE:-}" = chatterbox ]; then
+      "$0" chatterbox install
+    fi
     if [ ! -x "$BIN" ]; then
-      echo "error: $BIN not found — run 'mise run $TARGET:build' first" >&2
+      echo "error: $BIN not found — run 'mise run $BUILD_HINT' first" >&2
       exit 1
     fi
     preflight
@@ -103,16 +140,28 @@ case "$CMD" in
     launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
     rm -f "$PLIST"
     echo "uninstalled $LABEL"
+    if [ "$TARGET" = server ]; then
+      "$0" chatterbox uninstall 2>/dev/null || true
+    fi
     ;;
   start)
+    if [ "$TARGET" = server ] && server_uses_chatterbox_installed; then
+      "$0" chatterbox start
+    fi
     launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null || launchctl kickstart "$DOMAIN/$LABEL"
     echo "started $LABEL"
     ;;
   stop)
     launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
     echo "stopped $LABEL (unloaded; run start to bring it back)"
+    if [ "$TARGET" = server ]; then
+      "$0" chatterbox stop 2>/dev/null || true
+    fi
     ;;
   restart)
+    if [ "$TARGET" = server ] && server_uses_chatterbox_installed; then
+      "$0" chatterbox restart
+    fi
     launchctl kickstart -k "$DOMAIN/$LABEL"
     echo "restarted $LABEL"
     ;;

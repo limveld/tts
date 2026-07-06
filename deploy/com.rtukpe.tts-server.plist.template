@@ -35,6 +35,12 @@
          deploy/service.sh. Empty = no auth. (launchd never reads ~/.zshrc.) -->
     <key>TTS_TOKEN</key>
     <string>__TTS_TOKEN__</string>
+    <!-- Synthesis backend + Chatterbox server URL, substituted from the installing
+         shell's $TTS_ENGINE / $CHATTERBOX_URL. Empty TTS_ENGINE = kokoro (default). -->
+    <key>TTS_ENGINE</key>
+    <string>__TTS_ENGINE__</string>
+    <key>CHATTERBOX_URL</key>
+    <string>__CHATTERBOX_URL__</string>
   </dict>
 
   <!-- Start at login and keep it running (restart on crash). -->
