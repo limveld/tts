@@ -38,7 +38,7 @@ func main() {
 	sfxDir := flag.String("sfx-dir", "sfx", "directory holding the downloaded soundboard clips")
 	engineName := flag.String("engine", envOr("TTS_ENGINE", "kokoro"), "synthesis engine: kokoro (local sidecar) or chatterbox (external devnen server) (env TTS_ENGINE)")
 	chatterboxURL := flag.String("chatterbox-url", os.Getenv("CHATTERBOX_URL"), "devnen Chatterbox server base URL (env CHATTERBOX_URL); required when -engine chatterbox")
-	chatterboxVoice := flag.String("chatterbox-voice", "", "Chatterbox predefined_voice_id (empty = the devnen server's default)")
+	chatterboxVoice := flag.String("chatterbox-voice", envOr("CHATTERBOX_VOICE", "Emily.wav"), "Chatterbox predefined_voice_id, a voices/ filename devnen requires (env CHATTERBOX_VOICE)")
 	chatterboxExag := flag.Float64("chatterbox-exaggeration", 0.7, "Chatterbox exaggeration (higher = more dramatic)")
 	chatterboxCfg := flag.Float64("chatterbox-cfg", 0.3, "Chatterbox cfg_weight")
 	chatterboxUnloadEvery := flag.Int("chatterbox-unload-every", 0, "POST /api/unload every N generations to reclaim memory (0 = never)")

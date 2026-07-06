@@ -50,14 +50,18 @@ echo "==> Installing chatterbox-v2 (MPS-patched fork), s3tokenizer, onnx…"
 echo "==> Pinning protobuf>=4.25.0"
 "$PIP" install --no-deps --force-reinstall "protobuf>=4.25.0"
 
-# Point the server at the local MPS GPU and bind loopback:8004 (config.py reads
-# ./config.yaml relative to cwd, which the launchd plist sets to chatterbox-server).
-echo "==> Patching config.yaml (device: mps, host: 127.0.0.1, port: 8004)"
+# Bind loopback:8004 and run on CPU. MPS loads the model but crashes during
+# synthesis of the Turbo model — torchaudio's reference resample raises "conv1d
+# output channels > 65536 not supported on MPS", which PYTORCH_ENABLE_MPS_FALLBACK
+# does NOT rescue (the op is MPS-registered). CPU is reliable (~4s per short line on
+# Apple Silicon). config.py reads ./config.yaml relative to cwd, which the launchd
+# plist sets to chatterbox-server.
+echo "==> Patching config.yaml (device: cpu, host: 127.0.0.1, port: 8004)"
 CFG="$SRV/config.yaml"
 sed -i.bak \
   -e 's/^\(  host: \).*/\1127.0.0.1/' \
   -e 's/^\(  port: \).*/\18004/' \
-  -e 's/^\(  device: \).*/\1mps/' \
+  -e 's/^\(  device: \).*/\1cpu/' \
   "$CFG"
 rm -f "$CFG.bak"
 

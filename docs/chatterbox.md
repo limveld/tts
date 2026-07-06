@@ -40,7 +40,7 @@ Chatterbox mode needs **no** kokoro venv or sidecar (kokoro's `-python`/`-sideca
 |------|-----|---------|---------|
 | `-engine` | `TTS_ENGINE` | `kokoro` | `kokoro` or `chatterbox` |
 | `-chatterbox-url` | `CHATTERBOX_URL` | `""` | devnen base URL (**required** for `-engine chatterbox`) |
-| `-chatterbox-voice` | — | `""` | `predefined_voice_id`; empty = the devnen server's default |
+| `-chatterbox-voice` | `CHATTERBOX_VOICE` | `Emily.wav` | `predefined_voice_id` — a `chatterbox-server/voices/` filename; devnen **requires** one |
 | `-chatterbox-exaggeration` | — | `0.7` | drama; higher = more expressive |
 | `-chatterbox-cfg` | — | `0.3` | `cfg_weight` |
 | `-chatterbox-unload-every` | — | `0` | POST `/api/unload` every N generations to reclaim memory (0 = never) |
@@ -52,10 +52,24 @@ Chatterbox is slower than kokoro and slows further with long text — lower `-ma
 
 The devnen server is vendored as a submodule and installed by `mise run chatterbox:setup`,
 which mirrors devnen's own Apple-Silicon install (`deploy/chatterbox-setup.sh`): a **Python
-3.10** venv at `chatterbox-server/venv`, `requirements.txt` (torch 2.5.1 w/ MPS), the
-MPS-patched `chatterbox-v2` fork, and a patched `config.yaml` (`device: mps`, `host:
-127.0.0.1`, `port: 8004`). The ~3 GB model downloads on first server run. The Go server just
-speaks HTTP to it.
+3.10** venv at `chatterbox-server/venv`, `requirements.txt` (torch 2.5.1), the
+`chatterbox-v2` fork, and a patched `config.yaml` (`device: cpu`, `host: 127.0.0.1`, `port:
+8004`). The ~3 GB model downloads on first server run. The Go server just speaks HTTP to it.
+
+### Why `device: cpu` and not MPS
+
+MPS *loads* the Turbo model fine, but **synthesis crashes on MPS**: torchaudio's reference-
+audio resample raises `conv1d output channels > 65536 not supported at the MPS device`, and
+`PYTORCH_ENABLE_MPS_FALLBACK=1` does **not** rescue it (the op is MPS-registered, so the
+fallback never triggers). CPU is reliable — ~4 s for a short line on Apple Silicon (well under
+the feared 10–30 s). If a future chatterbox/torchaudio release fixes the resample, flip
+`device` back to `mps` in `chatterbox-server/config.yaml`.
+
+### Voice
+
+devnen **requires** a `predefined_voice_id` (a filename under `chatterbox-server/voices/`,
+e.g. `Emily.wav`, `Julian.wav`) — it does *not* fall back to the config's `default_voice_id`.
+Our client defaults to `Emily.wav` (`-chatterbox-voice` / `CHATTERBOX_VOICE`).
 
 The submodule pins a specific commit (`ignore = dirty`, so the built `venv`/`config.yaml`
 don't dirty the parent). If you bump it, re-check `chatterbox-server/start.py`'s install steps
