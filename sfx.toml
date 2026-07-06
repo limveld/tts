@@ -40,6 +40,35 @@ url = "https://www.myinstants.com/media/sounds/du-bist-gut-genug_5d9IXZw.mp3"
 file = "spongebob-fail.mp3"
 url = "https://www.myinstants.com/media/sounds/spongebob-fail.mp3"
 
+[sounds.tu]
+file = "tuturu_1.mp3"
+url = "https://www.myinstants.com/media/sounds/tuturu_1.mp3"
+
+[sounds.fah]
+file = "fahhh_KcgAXfs.mp3"
+url = "https://www.myinstants.com/media/sounds/fahhh_KcgAXfs.mp3"
+
+[sounds.mbappe]
+file = "dictator-mbappe-meme.mp3"
+volume = ""
+url = "https://www.myinstants.com/media/sounds/dictator-mbappe-meme.mp3"
+
+[sounds.dong]
+file = "undertakers-bell_2UwFCIe.mp3"
+url = "https://www.myinstants.com/media/sounds/undertakers-bell_2UwFCIe.mp3"
+
+[sounds.donot]
+file = "do-not-come.mp3"
+url = "https://www.myinstants.com/media/sounds/do-not-come.mp3"
+
+[sounds.notcare]
+file = "mike-tomlin-we-do-not-care-trim.mp3"
+url = "https://www.myinstants.com/media/sounds/mike-tomlin-we-do-not-care-trim.mp3"
+
+[sounds.hello]
+file = "obi-wan_says_hello_thereyoutubetomp4.mp3"
+url = "https://www.myinstants.com/media/sounds/obi-wan_says_hello_thereyoutubetomp4.mp3"
+
 # Example of one command with several clips (a random one plays per use):
 # [[sounds.airhorn.clips]]
 # file = "airhorn1.mp3"

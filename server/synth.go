@@ -15,6 +15,14 @@ import (
 	"time"
 )
 
+// Synthesizer turns text into a WAV file at outPath. The kokoro *Engine and the
+// Chatterbox client both implement it; which one the queue uses is chosen once at
+// server startup (see -engine in main.go).
+type Synthesizer interface {
+	Synthesize(ctx context.Context, text, voice, outPath string) error
+	Ready() bool
+}
+
 // Engine manages a persistent Python "sidecar" process that loads the Kokoro
 // model once and synthesizes speech on demand. Communication is line-delimited
 // JSON over the child's stdin/stdout (see pysidecar/tts_sidecar.py); the child's

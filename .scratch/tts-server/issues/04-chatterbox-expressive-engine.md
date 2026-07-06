@@ -1,64 +1,90 @@
-# Add Chatterbox as a second, expressive TTS engine (`!etts`)
+# Add Chatterbox as an alternative, expressive TTS engine (startup-selectable)
 
-Status: proposal — deferred (implement later)
+Status: ready-for-human
 Type: task
 Created: 2026-07-03
+Updated: 2026-07-06
 
 ## Summary
 
-Add Resemble AI's **Chatterbox** as a second TTS engine for **emotional/expressive** lines
-(its `exaggeration` knob), invoked via a separate **`!etts`** command. kokoro stays the fast
-default (`!tts`). Additive: the Go server, queue, VLC playback, and bot are engine-agnostic
-(text → WAV → speaker), so the work is mostly routing some jobs to a different synthesizer.
+Add Resemble AI's **Chatterbox** as an alternative TTS engine for **emotional/expressive**
+delivery (its `exaggeration` knob). The engine is **selected once at server startup** via
+`-engine kokoro|chatterbox` — there is **no second chat command**; the existing `!tts` uses
+whichever engine the server was launched with. kokoro stays the default. Additive: the Go
+queue, playback, and bot are engine-agnostic (text → WAV → speaker), so the work is a
+`Synthesizer` seam plus an HTTP client to the external devnen server.
 
-Deferred proposal — captured for later; not scheduled. Do the **feasibility spike** (below)
-before committing to the integration.
+**Code-first pass is implemented and landed** (see *Implemented* below). What remains is a
+manual **feasibility spike** on this Mac (stand up devnen, confirm the leak, tune the unload
+cadence, measure latency) — hence `ready-for-human`.
+
+> Design pivot (2026-07-06): dropped the original per-request `!etts` command in favor of a
+> startup flag. One command, one cooldown, one code path, bot untouched. See Comments.
 
 ## Feasibility findings (macOS)
 
 - **Runs on Apple Silicon, but not fast.** No NVIDIA → CPU (~10–30s/line) or MPS (~2–3× faster, buggy). Merged PR #410 added Mac `map_location`; the key MPS **float32 fix (PR #509) is still unmerged**; **memory leak #218** grows over long streams; #147 is an MPS unsupported-op crash.
 - **Chosen path: [devnen/Chatterbox-TTS-Server](https://github.com/devnen/Chatterbox-TTS-Server)** — ready-made server, supports MPS, **already float32-patched**, HTTP API with full params (`voice`, `exaggeration`, `cfg_weight`), downloads ~3 GB weights on first run.
-- **Dependency isolation:** Chatterbox pins `torch==2.6.0` / `transformers==5.2.0`, conflicting with kokoro's stack → runs in its **own venv/service**.
-- **Unavoidable:** every clip is **Perth-watermarked** (fine here); output **24 kHz** (same as kokoro); MIT license.
-- **Complexity:** low–moderate on our code (additive). Real effort/risk is operational: devnen setup on the Mac, tuning the preset, babysitting the memory leak.
+- **Dependency isolation:** Chatterbox pins `torch==2.6.0` / `transformers==5.2.0`, conflicting with kokoro's stack → runs in its **own venv/service** (a manual prerequisite; our Go server only speaks HTTP to it).
+- **Unavoidable:** every clip is **Perth-watermarked** (fine here); output **24 kHz** (same as kokoro → no player/overlay changes); MIT license.
+- **Complexity:** low on our code (additive). Real effort/risk is operational: devnen setup on the Mac, tuning the preset, handling the memory leak.
 
-## Decisions (from grilling)
+## Decisions (from grilling, as implemented)
 
-- Emotion-driven; **keep both** engines (kokoro default, Chatterbox for `!etts`).
-- Route via a **separate `!etts`** command (configurable name).
-- **devnen HTTP server** on **MPS**; Go calls its HTTP API.
+- **Keep both** engines; **select at startup** via `-engine` (not a second `!etts` command).
+- **devnen HTTP server** on **MPS**; Go calls its HTTP API. devnen is a **manual prerequisite**.
 - **Default voice** (no reference clip); **fixed dramatic preset** (`exaggeration ~0.7`, `cfg_weight ~0.3`).
-- **Everyone eligible + long cooldown** (~180s, configurable).
-- **One shared queue/worker/player** — a slow `!etts` blocks the queue (~10–30s) then plays. Accepted.
+- **One shared queue/worker/player** — chatterbox is slow (~10–30s) then plays. Accepted.
+- **Memory leak #218** handled in-Go by a **flag-gated `/api/unload` cadence** (`-chatterbox-unload-every`, default off), **not** an OS periodic-restart/watchdog. No `deploy/`/launchd changes.
 
 ## Architecture
 
 ```
-!tts  → bot → Go POST /say {engine:"kokoro"}     → queue → kokoro sidecar (stdio) → WAV → VLC
-!etts → bot → Go POST /say {engine:"chatterbox"} → queue → devnen server (HTTP)   → WAV → VLC
+!tts → bot → Go POST /say {text} → queue → Synthesizer (chosen at startup) → WAV → player
+                                             ├─ kokoro:     local Python sidecar (stdio)
+                                             └─ chatterbox: devnen server (HTTP /tts)
 ```
-One queue, one worker, one VLC player; the worker branches on `engine`.
+One queue, one worker, one player. The active engine is a single `Synthesizer` on the queue;
+only the selected engine is constructed at startup (chatterbox mode needs no venv/sidecar;
+kokoro mode needs no devnen).
 
-## Work items
+## Implemented (this pass — server only, bot untouched)
 
-1. **devnen Chatterbox server** (new service, not Go): install in its own venv (Python 3.11, torch 2.6); `config.yaml` `device: mps`; bind `127.0.0.1:8090`; confirm the synth endpoint + param names (custom `/tts` + OpenAI-compatible `/v1/audio/speech`). Deploy as a launchd agent + `chatterbox:*` mise tasks (mirror `deploy/service.sh`). Mitigate memory leak #218 via periodic restart.
-2. **Go server (`server/`)**: add optional `engine` field to `/say` (default `kokoro`); `QueueItem` carries `Engine`. New `server/chatterbox.go` HTTP client → devnen → temp WAV (reuse existing temp-file/cleanup contract). `queue.go` worker branches: `kokoro` → sidecar `Synthesize`; `chatterbox` → HTTP; then the **existing** `player.Play`. Flags: `-chatterbox-url`, `-chatterbox-exaggeration`, `-chatterbox-cfg`, `-chatterbox-max-chars` (~150).
-3. **Bot (`bot/`)**: add `!etts` (`-cmd-etts`) → POST `/say` with `engine=chatterbox`; own cooldown (`-etts-cooldown` ~180s), everyone-eligible, reuse `sanitize`.
-4. **Docs/discoverability**: add `!etts` to `docs/voices.md`/README; Twitch panel + SE entry is an optional follow-up (browser task).
+- **`server/synth.go`** — new `Synthesizer` interface (`Synthesize` + `Ready`); kokoro's `*Engine` already satisfies it.
+- **`server/chatterbox.go`** (new) — `chatterboxClient` implements `Synthesizer`: POSTs `/tts` `{text, voice_mode:"predefined", predefined_voice_id?, exaggeration, cfg_weight, output_format:"wav"}`, streams the WAV to the temp file, cancelable via request context (so `!skip` works). Includes the best-effort `/api/unload` cadence.
+- **`server/queue.go`** — holds a single `synth Synthesizer` (swapped from the concrete `*Engine`); `process()`/`Status()` updated. No per-item engine field, no request-shape change.
+- **`server/main.go`** — startup switch on `-engine`; builds only the selected engine. Flags: `-engine` (`kokoro`), `-chatterbox-url` (env **`CHATTERBOX_URL`**), `-chatterbox-voice`, `-chatterbox-exaggeration` (0.7), `-chatterbox-cfg` (0.3), `-chatterbox-unload-every` (0).
+- **`mise.toml`** — `server:serve:chatterbox` task (reads `CHATTERBOX_URL`).
+- **`docs/chatterbox.md`** — run instructions, flags/env table, devnen setup, memory-reset note.
+- **Tests** — `server/chatterbox_test.go`: a fake devnen (`httptest`) asserting the `/tts` body/preset, the WAV-written-and-played path through a real Queue+Server, and the unload cadence (fires every N; never when 0). `server/server.go` and all of `bot/` unchanged.
+
+## Remaining (manual, needs the model)
+
+- Stand up devnen (own venv Python 3.11, `torch 2.6`; `config.yaml` `device: mps`; bind `127.0.0.1:8004`; ~3 GB on first run) and confirm its `/tts` + `/api/unload` semantics against the running server.
+- Run the **#218 minimal repro** (~20 generations, log `psutil` RSS) on 0.1.7/MPS; if RSS climbs, set `-chatterbox-unload-every` (e.g. 15–25) and confirm devnen reloads after `/api/unload`.
+- End-to-end + latency: `CHATTERBOX_URL=http://127.0.0.1:8004 mise run server:serve:chatterbox`; `!tts this is dramatic` plays expressively. If unusably slow, lower `-max-chars` or revisit (MLX-audio).
 
 ## Verification
 
-1. **Spike first:** stand up devnen; `curl` its endpoint with the dramatic preset → WAV → play; **measure real latency + RSS growth over ~20 calls** on this Mac. If unusably slow/leaky, revisit (MLX-audio path, or gate to mods).
-2. `go build ./... && go vet ./... && go test ./...` clean; add an engine-routing unit test (`httptest` fake chatterbox, assert the right synth path).
-3. End-to-end: kokoro server + devnen server + bot; `!tts hi` (fast) and `!etts this is dramatic` (slow, dramatic); confirm both play and the queue serializes.
+1. `go build ./... && go vet ./... && go test ./...` clean — done (chatterbox client + queue-through + unload-cadence tests pass; existing suites unchanged).
+2. Smoke (no model): `-engine chatterbox` without a URL → fatal; against an `httptest` stub, `POST /say` → 202 and the stub receives `/tts` — done.
+3. Spike (above) — pending.
 
 ## Risks
 
-- `!etts` slow on Mac, blocks the shared queue — accepted; long cooldown limits frequency.
-- Memory leak #218 — validate the periodic-restart mitigation over a long session.
+- Chatterbox slow on Mac, blocks the shared queue — accepted; low request rate limits impact.
+- Memory leak #218 — validate the `/api/unload` cadence over a long session; tune `-chatterbox-unload-every`.
 - Watermark on every Chatterbox clip — unavoidable.
 
 ## Reference
 
-Full design notes: `~/.claude/plans/linear-moseying-whistle.md` (session-scoped copy).
-Repo: https://github.com/resemble-ai/chatterbox · Server: https://github.com/devnen/Chatterbox-TTS-Server
+- Docs: `docs/chatterbox.md`. Impl plan: `~/.claude/plans/impl-users-rtukpe-claude-plans-linear-mo-piped-hamming.md`.
+- Repo: https://github.com/resemble-ai/chatterbox · Server: https://github.com/devnen/Chatterbox-TTS-Server
+
+## Comments
+
+### 2026-07-06 — design pivot + implementation
+
+- **Dropped the per-request `!etts` command** (and the `/say` `engine` field, per-item `QueueItem.Engine`, separate `-etts-cooldown`, and all bot changes). Replaced with a **startup `-engine` flag** so there's one command, one cooldown, one code path; switching engines is a server restart. This shrank the change to server-only.
+- **Added env-driven config:** `-chatterbox-url` defaults from **`CHATTERBOX_URL`** (mirrors `TTS_TOKEN` → `-token`), so the `mise run server:serve:chatterbox` task and the launchd service can enable chatterbox via the environment.
+- **Memory leak #218:** implemented as the flag-gated `/api/unload` cadence in `server/chatterbox.go` (`-chatterbox-unload-every`, default off), replacing the earlier "launchd periodic restart" idea — no `deploy/` changes.

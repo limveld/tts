@@ -19,9 +19,17 @@ outputs = ["bin/tts-server"]
 run = "go build -o bin/tts-server ./server"
 
 [tasks."server:serve"]
-description = "Run the TTS server in the foreground (dev)"
+description = "Run the TTS server in the foreground (dev, kokoro engine)"
 depends = ["server:build"]
 run = "./bin/tts-server"
+
+[tasks."server:serve:chatterbox"]
+description = "Run the TTS server with the external Chatterbox engine (set CHATTERBOX_URL)"
+depends = ["server:build"]
+run = '''
+: "${CHATTERBOX_URL:?set CHATTERBOX_URL to your devnen server URL, e.g. http://127.0.0.1:8004}"
+./bin/tts-server -engine chatterbox
+'''
 
 [tasks."server:service:install"]
 description = "Install & start the TTS server launchd service (auto-start at login)"

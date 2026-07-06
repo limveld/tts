@@ -49,16 +49,17 @@ type Queue struct {
 	current       *QueueItem
 	cancelCurrent context.CancelFunc
 
-	engine *Engine
+	synth  Synthesizer
 	player Player
 	tmpDir string
 	logger *log.Logger
 }
 
-// NewQueue constructs a Queue. maxLen caps the number of pending items.
-func NewQueue(engine *Engine, player Player, tmpDir string, maxLen int, logger *log.Logger) *Queue {
+// NewQueue constructs a Queue. synth is the synthesis engine selected at startup
+// (kokoro or chatterbox); maxLen caps the number of pending items.
+func NewQueue(synth Synthesizer, player Player, tmpDir string, maxLen int, logger *log.Logger) *Queue {
 	q := &Queue{
-		engine: engine,
+		synth:  synth,
 		player: player,
 		tmpDir: tmpDir,
 		maxLen: maxLen,
@@ -149,7 +150,7 @@ func (q *Queue) Status() Status {
 	}
 	return Status{
 		Paused:      q.paused,
-		EngineReady: q.engine != nil && q.engine.Ready(),
+		EngineReady: q.synth != nil && q.synth.Ready(),
 		QueueLength: len(q.items),
 		Current:     current,
 		Pending:     pending,
@@ -203,7 +204,7 @@ func (q *Queue) process(ctx context.Context, item QueueItem) {
 	wav := filepath.Join(q.tmpDir, fmt.Sprintf("tts-%d.wav", item.ID))
 	defer os.Remove(wav)
 
-	if err := q.engine.Synthesize(ctx, item.Text, item.Voice, wav); err != nil {
+	if err := q.synth.Synthesize(ctx, item.Text, item.Voice, wav); err != nil {
 		if ctx.Err() != nil {
 			q.logger.Printf("job %d skipped during synthesis", item.ID)
 		} else {

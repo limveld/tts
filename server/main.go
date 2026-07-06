@@ -36,6 +36,12 @@ func main() {
 	playerMode := flag.String("player", "browser", "playback backend: browser (OBS Browser Source overlay) or vlc (local speakers)")
 	sfxConfig := flag.String("sfx-config", "sfx.toml", "soundboard TOML (command -> clip); optional")
 	sfxDir := flag.String("sfx-dir", "sfx", "directory holding the downloaded soundboard clips")
+	engineName := flag.String("engine", "kokoro", "synthesis engine: kokoro (local sidecar) or chatterbox (external devnen server)")
+	chatterboxURL := flag.String("chatterbox-url", os.Getenv("CHATTERBOX_URL"), "devnen Chatterbox server base URL (env CHATTERBOX_URL); required when -engine chatterbox")
+	chatterboxVoice := flag.String("chatterbox-voice", "", "Chatterbox predefined_voice_id (empty = the devnen server's default)")
+	chatterboxExag := flag.Float64("chatterbox-exaggeration", 0.7, "Chatterbox exaggeration (higher = more dramatic)")
+	chatterboxCfg := flag.Float64("chatterbox-cfg", 0.3, "Chatterbox cfg_weight")
+	chatterboxUnloadEvery := flag.Int("chatterbox-unload-every", 0, "POST /api/unload every N generations to reclaim memory (0 = never)")
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "", log.LstdFlags)
@@ -44,10 +50,6 @@ func main() {
 		logger.Fatalf("invalid -player %q: use browser or vlc", *playerMode)
 	}
 
-	// Validate the Python interpreter and sidecar script.
-	pyPath := mustExist(logger, *python, "python interpreter (create the venv or pass -python)")
-	scriptPath := mustExist(logger, *sidecar, "sidecar script (pass -sidecar)")
-
 	if err := os.MkdirAll(*tmpDir, 0o755); err != nil {
 		logger.Fatalf("creating tmpdir %s: %v", *tmpDir, err)
 	}
@@ -55,8 +57,26 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	engine := NewEngine(pyPath, scriptPath, *lang, *voice, *speed, logger)
-	go engine.Run(ctx)
+	// Pick the synthesis engine at startup and build only that one, so chatterbox
+	// mode needs no Python venv/sidecar and kokoro mode needs no devnen server.
+	var synth Synthesizer
+	switch *engineName {
+	case "kokoro":
+		pyPath := mustExist(logger, *python, "python interpreter (create the venv or pass -python)")
+		scriptPath := mustExist(logger, *sidecar, "sidecar script (pass -sidecar)")
+		engine := NewEngine(pyPath, scriptPath, *lang, *voice, *speed, logger)
+		go engine.Run(ctx)
+		synth = engine
+		logger.Printf("engine: kokoro (local sidecar) — model loading in the background")
+	case "chatterbox":
+		if *chatterboxURL == "" {
+			logger.Fatalf("-engine chatterbox requires -chatterbox-url (or the CHATTERBOX_URL env var)")
+		}
+		synth = newChatterboxClient(*chatterboxURL, *chatterboxVoice, *chatterboxExag, *chatterboxCfg, *chatterboxUnloadEvery, logger)
+		logger.Printf("engine: chatterbox at %s (exaggeration=%.2f cfg=%.2f)", *chatterboxURL, *chatterboxExag, *chatterboxCfg)
+	default:
+		logger.Fatalf("invalid -engine %q: use kokoro or chatterbox", *engineName)
+	}
 
 	// The overlay hub is always available (serves /overlay*); the browser player
 	// pushes clips to it. VLC is resolved only when actually selected.
@@ -83,7 +103,7 @@ func main() {
 		p = NewBrowserPlayer(overlay, logger)
 	}
 
-	queue := NewQueue(engine, p, *tmpDir, *maxQueue, logger)
+	queue := NewQueue(synth, p, *tmpDir, *maxQueue, logger)
 	go queue.Run(ctx)
 
 	// Optional soundboard: chat commands that play pre-recorded clips through the
@@ -112,7 +132,7 @@ func main() {
 	if *token != "" {
 		authNote = "token required"
 	}
-	logger.Printf("TTS server listening on %s (%s); the model is loading in the background", *addr, authNote)
+	logger.Printf("TTS server listening on %s (%s)", *addr, authNote)
 
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Fatalf("http server: %v", err)
