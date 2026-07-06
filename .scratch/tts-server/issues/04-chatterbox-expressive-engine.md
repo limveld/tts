@@ -1,6 +1,6 @@
 # Add Chatterbox as an alternative, expressive TTS engine (startup-selectable)
 
-Status: ready-for-human
+Status: wontfix
 Type: task
 Created: 2026-07-03
 Updated: 2026-07-06
@@ -88,3 +88,11 @@ kokoro mode needs no devnen).
 - **Dropped the per-request `!etts` command** (and the `/say` `engine` field, per-item `QueueItem.Engine`, separate `-etts-cooldown`, and all bot changes). Replaced with a **startup `-engine` flag** so there's one command, one cooldown, one code path; switching engines is a server restart. This shrank the change to server-only.
 - **Added env-driven config:** `-chatterbox-url` defaults from **`CHATTERBOX_URL`** (mirrors `TTS_TOKEN` → `-token`), so the `mise run server:serve:chatterbox` task and the launchd service can enable chatterbox via the environment.
 - **Memory leak #218:** implemented as the flag-gated `/api/unload` cadence in `server/chatterbox.go` (`-chatterbox-unload-every`, default off), replacing the earlier "launchd periodic restart" idea — no `deploy/` changes.
+
+### 2026-07-06 — removed (wontfix)
+
+Chatterbox shipped and ran on CPU, but its **speech quality was poor** in real use. Removed
+the whole engine — the `chatterbox-server` submodule, `deploy/chatterbox-*`, the `service.sh`
+co-management, `server/chatterbox.go`/tests, and the `chatterbox:*` mise tasks — in favor of
+**Amazon Polly** (neural voices, cloud API), which now fills the expressive/quality slot behind
+`-engine polly`. See `docs/polly.md`. kokoro remains the default.

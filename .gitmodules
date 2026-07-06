@@ -2,7 +2,3 @@
 	path = kokoro
 	url = https://github.com/hexgrad/kokoro.git
 	branch = main
-[submodule "chatterbox-server"]
-	path = chatterbox-server
-	url = https://github.com/devnen/Chatterbox-TTS-Server.git
-	ignore = dirty

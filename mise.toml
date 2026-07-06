@@ -23,14 +23,6 @@ description = "Run the TTS server in the foreground (dev, kokoro engine)"
 depends = ["server:build"]
 run = "./bin/tts-server"
 
-[tasks."server:serve:chatterbox"]
-description = "Run the TTS server with the external Chatterbox engine (set CHATTERBOX_URL)"
-depends = ["server:build"]
-run = '''
-: "${CHATTERBOX_URL:?set CHATTERBOX_URL to your devnen server URL, e.g. http://127.0.0.1:8004}"
-./bin/tts-server -engine chatterbox
-'''
-
 [tasks."server:serve:polly"]
 description = "Run the TTS server with the Amazon Polly engine (needs AWS creds in ~/.aws or env)"
 depends = ["server:build"]
@@ -70,46 +62,6 @@ run = "bash deploy/service.sh server logs"
 [tasks."sfx:fetch"]
 description = "Download soundboard clips declared in sfx.toml into sfx/ (idempotent)"
 run = "go run ./cmd/sfx-fetch"
-
-# ---- chatterbox (expressive engine; the vendored devnen submodule) ----------
-
-[tasks."chatterbox:setup"]
-description = "Install the Chatterbox (devnen) submodule into its own Python 3.10 venv (heavy)"
-run = "bash deploy/chatterbox-setup.sh"
-
-[tasks."chatterbox:serve"]
-description = "Run the Chatterbox server in the foreground (dev); needs chatterbox:setup first"
-dir = "chatterbox-server"
-env = { PYTORCH_ENABLE_MPS_FALLBACK = "1" }
-run = "venv/bin/python server.py"
-
-[tasks."chatterbox:service:install"]
-description = "Install & start the Chatterbox launchd service (auto-start at login)"
-run = "bash deploy/service.sh chatterbox install"
-
-[tasks."chatterbox:service:uninstall"]
-description = "Stop & remove the Chatterbox service"
-run = "bash deploy/service.sh chatterbox uninstall"
-
-[tasks."chatterbox:service:start"]
-description = "Start (load) the Chatterbox service"
-run = "bash deploy/service.sh chatterbox start"
-
-[tasks."chatterbox:service:stop"]
-description = "Stop (unload) the Chatterbox service"
-run = "bash deploy/service.sh chatterbox stop"
-
-[tasks."chatterbox:service:restart"]
-description = "Restart the Chatterbox service"
-run = "bash deploy/service.sh chatterbox restart"
-
-[tasks."chatterbox:service:status"]
-description = "Show the Chatterbox service state and hit /api/model-info"
-run = "bash deploy/service.sh chatterbox status"
-
-[tasks."chatterbox:service:logs"]
-description = "Follow the Chatterbox error log"
-run = "bash deploy/service.sh chatterbox logs"
 
 # ---- bot -------------------------------------------------------------------
 

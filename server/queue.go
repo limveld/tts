@@ -56,7 +56,7 @@ type Queue struct {
 }
 
 // NewQueue constructs a Queue. synth is the synthesis engine selected at startup
-// (kokoro or chatterbox); maxLen caps the number of pending items.
+// (kokoro or polly); maxLen caps the number of pending items.
 func NewQueue(synth Synthesizer, player Player, tmpDir string, maxLen int, logger *log.Logger) *Queue {
 	q := &Queue{
 		synth:  synth,

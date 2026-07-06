@@ -36,12 +36,7 @@ func main() {
 	playerMode := flag.String("player", "browser", "playback backend: browser (OBS Browser Source overlay) or vlc (local speakers)")
 	sfxConfig := flag.String("sfx-config", "sfx.toml", "soundboard TOML (command -> clip); optional")
 	sfxDir := flag.String("sfx-dir", "sfx", "directory holding the downloaded soundboard clips")
-	engineName := flag.String("engine", envOr("TTS_ENGINE", "kokoro"), "synthesis engine: kokoro (local sidecar) or chatterbox (external devnen server) (env TTS_ENGINE)")
-	chatterboxURL := flag.String("chatterbox-url", os.Getenv("CHATTERBOX_URL"), "devnen Chatterbox server base URL (env CHATTERBOX_URL); required when -engine chatterbox")
-	chatterboxVoice := flag.String("chatterbox-voice", envOr("CHATTERBOX_VOICE", "Emily.wav"), "Chatterbox predefined_voice_id, a voices/ filename devnen requires (env CHATTERBOX_VOICE)")
-	chatterboxExag := flag.Float64("chatterbox-exaggeration", 0.7, "Chatterbox exaggeration (higher = more dramatic)")
-	chatterboxCfg := flag.Float64("chatterbox-cfg", 0.3, "Chatterbox cfg_weight")
-	chatterboxUnloadEvery := flag.Int("chatterbox-unload-every", 0, "POST /api/unload every N generations to reclaim memory (0 = never)")
+	engineName := flag.String("engine", envOr("TTS_ENGINE", "kokoro"), "synthesis engine: kokoro (local sidecar) or polly (Amazon Polly) (env TTS_ENGINE)")
 	pollyVoice := flag.String("polly-voice", envOr("POLLY_VOICE", "Brian"), "Amazon Polly VoiceId (env POLLY_VOICE)")
 	pollyEngine := flag.String("polly-engine", envOr("POLLY_ENGINE", "neural"), "Amazon Polly engine: standard|neural|long-form|generative (env POLLY_ENGINE)")
 	pollyRegion := flag.String("polly-region", envOr("AWS_REGION", ""), "AWS region for Polly (falls back to ~/.aws/config)")
@@ -60,8 +55,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Pick the synthesis engine at startup and build only that one, so chatterbox
-	// mode needs no Python venv/sidecar and kokoro mode needs no devnen server.
+	// Pick the synthesis engine at startup and build only that one, so kokoro mode
+	// needs no AWS credentials and polly mode needs no Python venv/sidecar.
 	var synth Synthesizer
 	switch *engineName {
 	case "kokoro":
@@ -71,12 +66,6 @@ func main() {
 		go engine.Run(ctx)
 		synth = engine
 		logger.Printf("engine: kokoro (local sidecar) — model loading in the background")
-	case "chatterbox":
-		if *chatterboxURL == "" {
-			logger.Fatalf("-engine chatterbox requires -chatterbox-url (or the CHATTERBOX_URL env var)")
-		}
-		synth = newChatterboxClient(*chatterboxURL, *chatterboxVoice, *chatterboxExag, *chatterboxCfg, *chatterboxUnloadEvery, logger)
-		logger.Printf("engine: chatterbox at %s (exaggeration=%.2f cfg=%.2f)", *chatterboxURL, *chatterboxExag, *chatterboxCfg)
 	case "polly":
 		client, err := newPollyClient(ctx, *pollyRegion, *pollyVoice, *pollyEngine, logger)
 		if err != nil {
@@ -85,7 +74,7 @@ func main() {
 		synth = client
 		logger.Printf("engine: polly (engine=%s voice=%s)", *pollyEngine, *pollyVoice)
 	default:
-		logger.Fatalf("invalid -engine %q: use kokoro, chatterbox, or polly", *engineName)
+		logger.Fatalf("invalid -engine %q: use kokoro or polly", *engineName)
 	}
 
 	// The overlay hub is always available (serves /overlay*); the browser player
