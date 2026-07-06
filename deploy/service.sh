@@ -120,7 +120,7 @@ server_uses_chatterbox_installed() {
 case "$CMD" in
   install)
     if [ "$TARGET" = server ] && [ "${TTS_ENGINE:-}" = chatterbox ]; then
-      "$0" chatterbox install
+      bash "$0" chatterbox install
     fi
     if [ ! -x "$BIN" ]; then
       echo "error: $BIN not found — run 'mise run $BUILD_HINT' first" >&2
@@ -141,12 +141,12 @@ case "$CMD" in
     rm -f "$PLIST"
     echo "uninstalled $LABEL"
     if [ "$TARGET" = server ]; then
-      "$0" chatterbox uninstall 2>/dev/null || true
+      bash "$0" chatterbox uninstall 2>/dev/null || true
     fi
     ;;
   start)
     if [ "$TARGET" = server ] && server_uses_chatterbox_installed; then
-      "$0" chatterbox start
+      bash "$0" chatterbox start
     fi
     launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null || launchctl kickstart "$DOMAIN/$LABEL"
     echo "started $LABEL"
@@ -155,12 +155,12 @@ case "$CMD" in
     launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
     echo "stopped $LABEL (unloaded; run start to bring it back)"
     if [ "$TARGET" = server ]; then
-      "$0" chatterbox stop 2>/dev/null || true
+      bash "$0" chatterbox stop 2>/dev/null || true
     fi
     ;;
   restart)
     if [ "$TARGET" = server ] && server_uses_chatterbox_installed; then
-      "$0" chatterbox restart
+      bash "$0" chatterbox restart
     fi
     launchctl kickstart -k "$DOMAIN/$LABEL"
     echo "restarted $LABEL"
