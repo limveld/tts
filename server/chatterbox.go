@@ -111,6 +111,9 @@ func (c *chatterboxClient) Synthesize(ctx context.Context, text, voice, outPath 
 // and loads lazily, so there is nothing local to wait on.
 func (c *chatterboxClient) Ready() bool { return true }
 
+// Ext is the output file extension: devnen returns WAV.
+func (c *chatterboxClient) Ext() string { return ".wav" }
+
 // maybeUnload periodically asks devnen to release the model from memory, working
 // around an upstream leak (chatterbox #218). It is best-effort: a failed unload is
 // logged, not fatal, and devnen reloads the model lazily on the next /tts.

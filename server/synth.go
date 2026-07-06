@@ -15,12 +15,14 @@ import (
 	"time"
 )
 
-// Synthesizer turns text into a WAV file at outPath. The kokoro *Engine and the
-// Chatterbox client both implement it; which one the queue uses is chosen once at
-// server startup (see -engine in main.go).
+// Synthesizer turns text into an audio file at outPath. The kokoro *Engine and the
+// Polly client both implement it; which one the queue uses is chosen once at server
+// startup (see -engine in main.go). Ext reports the output file extension (e.g.
+// ".wav" or ".mp3") so the queue names the temp file correctly.
 type Synthesizer interface {
 	Synthesize(ctx context.Context, text, voice, outPath string) error
 	Ready() bool
+	Ext() string
 }
 
 // Engine manages a persistent Python "sidecar" process that loads the Kokoro
@@ -282,3 +284,6 @@ func (e *Engine) Ready() bool {
 	defer e.mu.Unlock()
 	return e.ready
 }
+
+// Ext is the output file extension: the kokoro sidecar writes WAV.
+func (e *Engine) Ext() string { return ".wav" }

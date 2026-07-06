@@ -201,7 +201,7 @@ func (q *Queue) process(ctx context.Context, item QueueItem) {
 		return
 	}
 
-	wav := filepath.Join(q.tmpDir, fmt.Sprintf("tts-%d.wav", item.ID))
+	wav := filepath.Join(q.tmpDir, fmt.Sprintf("tts-%d%s", item.ID, q.synth.Ext()))
 	defer os.Remove(wav)
 
 	if err := q.synth.Synthesize(ctx, item.Text, item.Voice, wav); err != nil {

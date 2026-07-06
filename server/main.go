@@ -42,6 +42,9 @@ func main() {
 	chatterboxExag := flag.Float64("chatterbox-exaggeration", 0.7, "Chatterbox exaggeration (higher = more dramatic)")
 	chatterboxCfg := flag.Float64("chatterbox-cfg", 0.3, "Chatterbox cfg_weight")
 	chatterboxUnloadEvery := flag.Int("chatterbox-unload-every", 0, "POST /api/unload every N generations to reclaim memory (0 = never)")
+	pollyVoice := flag.String("polly-voice", envOr("POLLY_VOICE", "Brian"), "Amazon Polly VoiceId (env POLLY_VOICE)")
+	pollyEngine := flag.String("polly-engine", envOr("POLLY_ENGINE", "neural"), "Amazon Polly engine: standard|neural|long-form|generative (env POLLY_ENGINE)")
+	pollyRegion := flag.String("polly-region", envOr("AWS_REGION", ""), "AWS region for Polly (falls back to ~/.aws/config)")
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "", log.LstdFlags)
@@ -74,8 +77,15 @@ func main() {
 		}
 		synth = newChatterboxClient(*chatterboxURL, *chatterboxVoice, *chatterboxExag, *chatterboxCfg, *chatterboxUnloadEvery, logger)
 		logger.Printf("engine: chatterbox at %s (exaggeration=%.2f cfg=%.2f)", *chatterboxURL, *chatterboxExag, *chatterboxCfg)
+	case "polly":
+		client, err := newPollyClient(ctx, *pollyRegion, *pollyVoice, *pollyEngine, logger)
+		if err != nil {
+			logger.Fatalf("polly: %v", err)
+		}
+		synth = client
+		logger.Printf("engine: polly (engine=%s voice=%s)", *pollyEngine, *pollyVoice)
 	default:
-		logger.Fatalf("invalid -engine %q: use kokoro or chatterbox", *engineName)
+		logger.Fatalf("invalid -engine %q: use kokoro, chatterbox, or polly", *engineName)
 	}
 
 	// The overlay hub is always available (serves /overlay*); the browser player
