@@ -20,22 +20,27 @@ type pollyAPI interface {
 	SynthesizeSpeech(context.Context, *polly.SynthesizeSpeechInput, ...func(*polly.Options)) (*polly.SynthesizeSpeechOutput, error)
 }
 
-// pollyClient is a Synthesizer backed by Amazon Polly (a cloud TTS API). It
-// synthesizes with a fixed voice + engine chosen at startup and streams the MP3
-// response to disk. Credentials/region come from the AWS default chain
-// (environment, ~/.aws, IAM); nothing is stored here.
+// pollyClient is a Synthesizer backed by Amazon Polly (a cloud TTS API). The voice
+// is chosen per request (resolved from a !tts code); each voice's engine tier comes
+// from voiceTiers (defaulting to defaultTier). It streams the MP3 response to disk.
+// Credentials/region come from the AWS default chain (environment, ~/.aws, IAM);
+// nothing is stored here.
 type pollyClient struct {
-	api        pollyAPI
-	voice      string // Polly VoiceId, e.g. "Brian"
-	engine     string // "standard" | "neural" | "long-form" | "generative"
-	sampleRate string // Hz; "24000" is native for neural/generative
-	logger     *log.Logger
+	api         pollyAPI
+	voiceTiers  map[string]string // voice id -> engine tier override
+	defaultTier string            // "standard" | "neural" | "long-form" | "generative"
+	sampleRate  string            // Hz; "24000" is native for neural/generative
+	logger      *log.Logger
 }
 
 // newPollyClient loads AWS config (region + credentials via the default chain) and
 // builds a Polly client. It fails fast with a clear message when the region or
-// credentials are missing, rather than erroring on the first !tts.
-func newPollyClient(ctx context.Context, region, voice, engine string, logger *log.Logger) (*pollyClient, error) {
+// credentials are missing, so the caller can disable Polly gracefully rather than
+// erroring on the first !tts.
+func newPollyClient(ctx context.Context, region, defaultTier string, voiceTiers map[string]string, logger *log.Logger) (*pollyClient, error) {
+	if defaultTier == "" {
+		defaultTier = "neural"
+	}
 	var opts []func(*config.LoadOptions) error
 	if region != "" {
 		opts = append(opts, config.WithRegion(region))
@@ -45,29 +50,31 @@ func newPollyClient(ctx context.Context, region, voice, engine string, logger *l
 		return nil, err
 	}
 	if cfg.Region == "" {
-		return nil, errors.New("no AWS region: pass -polly-region, set AWS_REGION, or configure ~/.aws/config")
+		return nil, errors.New("no AWS region: set region in voices.toml [polly], AWS_REGION, or ~/.aws/config")
 	}
 	if _, err := cfg.Credentials.Retrieve(ctx); err != nil {
 		return nil, fmt.Errorf("aws credentials: %w (run 'aws configure' or set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY)", err)
 	}
 	return &pollyClient{
-		api:        polly.NewFromConfig(cfg),
-		voice:      voice,
-		engine:     engine,
-		sampleRate: "24000",
-		logger:     logger,
+		api:         polly.NewFromConfig(cfg),
+		voiceTiers:  voiceTiers,
+		defaultTier: defaultTier,
+		sampleRate:  "24000",
+		logger:      logger,
 	}, nil
 }
 
-// Synthesize calls Polly's SynthesizeSpeech and streams the MP3 audio to outPath.
-// The per-request voice argument is ignored (kokoro voice codes don't apply); the
-// fixed startup voice/engine are used instead. ctx cancellation (a !skip) aborts
-// the request.
-func (c *pollyClient) Synthesize(ctx context.Context, text, _, outPath string) error {
+// Synthesize calls Polly's SynthesizeSpeech with the requested voice (and its tier)
+// and streams the MP3 audio to outPath. ctx cancellation (a !skip) aborts the request.
+func (c *pollyClient) Synthesize(ctx context.Context, text, voice, outPath string) error {
+	tier := c.voiceTiers[voice]
+	if tier == "" {
+		tier = c.defaultTier
+	}
 	out, err := c.api.SynthesizeSpeech(ctx, &polly.SynthesizeSpeechInput{
 		Text:         aws.String(text),
-		VoiceId:      types.VoiceId(c.voice),
-		Engine:       types.Engine(c.engine),
+		VoiceId:      types.VoiceId(voice),
+		Engine:       types.Engine(tier),
 		OutputFormat: types.OutputFormatMp3,
 		SampleRate:   aws.String(c.sampleRate),
 		TextType:     types.TextTypeText,

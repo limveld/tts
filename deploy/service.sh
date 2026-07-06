@@ -31,8 +31,6 @@ esc() { printf '%s' "${1:-}" | sed 's/[&|\\]/\\&/g'; }
 TOKEN_ESC=$(esc "${TTS_TOKEN:-}")
 TWITCH_ID_ESC=$(esc "${TWITCH_CLIENT_ID:-}")
 TWITCH_SECRET_ESC=$(esc "${TWITCH_CLIENT_SECRET:-}")
-# Backend selection for the server (baked into its plist, like TTS_TOKEN).
-ENGINE_ESC=$(esc "${TTS_ENGINE:-}")
 
 TARGET="${1:-}"
 CMD="${2:-}"
@@ -52,7 +50,6 @@ case "$TARGET" in
     render() {
       sed -e "s|__REPO__|$REPO|g" -e "s|__LOGDIR__|$LOGDIR|g" -e "s|__ADDR__|$ADDR|g" \
           -e "s|__TTS_TOKEN__|$TOKEN_ESC|g" \
-          -e "s|__TTS_ENGINE__|$ENGINE_ESC|g" \
           "$REPO/deploy/$LABEL.plist.template"
     }
     health() { curl -s -m 2 "http://$ADDR/healthz" && echo || echo "  (not responding)"; }

@@ -12,7 +12,7 @@ import (
 // TTS is the subset of the TTS server the router drives (an interface so tests
 // can substitute a fake).
 type TTS interface {
-	Say(text, voice string) error
+	Say(text, code string) error
 	SFX(name string) error
 	Pause() error
 	Resume() error
@@ -35,8 +35,8 @@ func NewTTSClient(baseURL, token string) *TTSClient {
 	}
 }
 
-func (c *TTSClient) Say(text, voice string) error {
-	body, _ := json.Marshal(map[string]string{"text": text, "voice": voice})
+func (c *TTSClient) Say(text, code string) error {
+	body, _ := json.Marshal(map[string]string{"text": text, "code": code})
 	return c.post("/say", body)
 }
 

@@ -14,6 +14,7 @@ type Server struct {
 	queue    *Queue
 	overlay  *Overlay  // may be nil; when set, /overlay* routes are registered
 	sfx      *sfxBoard // may be nil; when nil, /sfx returns 404 (not configured)
+	voices   *VoiceMap // resolves a /say "code" to (engine, voice); may be nil
 	token    string
 	maxChars int
 	logger   *log.Logger
@@ -22,8 +23,8 @@ type Server struct {
 // NewServer builds the HTTP layer. If token is non-empty, every route except
 // /healthz (and the overlay, which authenticates via a ?token= query param)
 // requires the bearer token.
-func NewServer(q *Queue, overlay *Overlay, sfx *sfxBoard, token string, maxChars int, logger *log.Logger) *Server {
-	return &Server{queue: q, overlay: overlay, sfx: sfx, token: token, maxChars: maxChars, logger: logger}
+func NewServer(q *Queue, overlay *Overlay, sfx *sfxBoard, voices *VoiceMap, token string, maxChars int, logger *log.Logger) *Server {
+	return &Server{queue: q, overlay: overlay, sfx: sfx, voices: voices, token: token, maxChars: maxChars, logger: logger}
 }
 
 // controlResponse is the body returned by the control endpoints: the queue
@@ -82,20 +83,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSay(w http.ResponseWriter, r *http.Request) {
-	var text, voice string
+	var text, code string
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		var body struct {
-			Text  string `json:"text"`
-			Voice string `json:"voice"`
+			Text string `json:"text"`
+			Code string `json:"code"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 			return
 		}
-		text, voice = body.Text, body.Voice
+		text, code = body.Text, body.Code
 	} else {
 		text = r.FormValue("text")
-		voice = r.FormValue("voice")
+		code = r.FormValue("code")
 	}
 
 	text = strings.TrimSpace(text)
@@ -109,7 +110,12 @@ func (s *Server) handleSay(w http.ResponseWriter, r *http.Request) {
 		truncated = true
 	}
 
-	id, position, err := s.queue.Enqueue(text, strings.TrimSpace(voice))
+	// Resolve the chat code to an (engine, voice); "" / unknown → weighted random.
+	engine, voice := "", strings.TrimSpace(code)
+	if s.voices != nil {
+		engine, voice = s.voices.Resolve(strings.TrimSpace(code))
+	}
+	id, position, err := s.queue.Enqueue(text, voice, engine)
 	if err != nil {
 		if errors.Is(err, ErrQueueFull) {
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "queue is full"})

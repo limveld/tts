@@ -21,7 +21,6 @@ type Router struct {
 	cmds     Commands
 	minRole  string              // everyone|sub|vip|mod
 	sfx      map[string]struct{} // sound commands (lowercased, with the leading "!")
-	voices   *VoiceResolver
 	cooldown *Cooldown
 	sanitize func(text string) (string, bool) // wraps Clean with blocklist+maxChars
 	tts      TTS
@@ -77,7 +76,8 @@ func (r *Router) Handle(m ChatMessage) {
 		return
 	}
 
-	// TTS: "!tts" (random) or "!tts<code>" (specific voice).
+	// TTS: "!tts" (random voice) or "!tts<code>" (specific voice). The code is
+	// forwarded to the server, which owns the code→voice map (per engine).
 	if !strings.HasPrefix(cmd, r.cmds.TTSPrefix) {
 		return
 	}
@@ -96,12 +96,11 @@ func (r *Router) Handle(m ChatMessage) {
 		r.logger.Printf("dropped (empty/blocked) from %s", m.User)
 		return
 	}
-	voice := r.voices.Resolve(code)
-	if err := r.tts.Say(clean, voice); err != nil {
+	if err := r.tts.Say(clean, code); err != nil {
 		r.logger.Printf("say error: %v", err)
 		return
 	}
-	r.logger.Printf("spoke [%s] for %s: %q", voice, m.User, clean)
+	r.logger.Printf("spoke [%s] for %s: %q", code, m.User, clean)
 }
 
 func (r *Router) eligible(m ChatMessage) bool {

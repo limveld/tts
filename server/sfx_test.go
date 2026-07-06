@@ -54,12 +54,12 @@ func (p *recPlayer) records() []playRec {
 func newSFXTestServer(t *testing.T, lib map[string][]sfxlib.Clip, sfxDir string, player Player) *httptest.Server {
 	t.Helper()
 	logger := log.New(io.Discard, "", 0)
-	q := NewQueue(nil, player, t.TempDir(), 100, logger)
+	q := NewQueue(nil, "kokoro", player, t.TempDir(), 100, logger)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go q.Run(ctx)
 	board := newSFXBoard(lib, sfxDir, rand.New(rand.NewSource(1)), logger)
-	ts := httptest.NewServer(NewServer(q, nil, board, "", 500, logger).Handler())
+	ts := httptest.NewServer(NewServer(q, nil, board, nil, "", 500, logger).Handler())
 	t.Cleanup(ts.Close)
 	return ts
 }

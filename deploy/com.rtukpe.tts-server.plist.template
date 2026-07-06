@@ -35,10 +35,6 @@
          deploy/service.sh. Empty = no auth. (launchd never reads ~/.zshrc.) -->
     <key>TTS_TOKEN</key>
     <string>__TTS_TOKEN__</string>
-    <!-- Synthesis backend, substituted from the installing shell's $TTS_ENGINE.
-         Empty = kokoro (default); "polly" selects Amazon Polly (creds via ~/.aws). -->
-    <key>TTS_ENGINE</key>
-    <string>__TTS_ENGINE__</string>
   </dict>
 
   <!-- Start at login and keep it running (restart on crash). -->

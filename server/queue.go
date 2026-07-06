@@ -15,14 +15,16 @@ import (
 var ErrQueueFull = errors.New("queue is full")
 
 // QueueItem is one pending or in-flight job. Kind "" or "tts" is synthesized
-// from Text/Voice; kind "sfx" plays the pre-recorded file at Src (Text holds the
-// sound's command name, for logging/status).
+// from Text/Voice by the Engine's synthesizer; kind "sfx" plays the pre-recorded
+// file at Src (Text holds the sound's command name, for logging/status). Engine ""
+// means the queue's default engine.
 type QueueItem struct {
-	ID    int64  `json:"id"`
-	Kind  string `json:"kind,omitempty"`
-	Text  string `json:"text"`
-	Voice string `json:"voice,omitempty"`
-	Src   string `json:"src,omitempty"`
+	ID     int64  `json:"id"`
+	Kind   string `json:"kind,omitempty"`
+	Text   string `json:"text"`
+	Voice  string `json:"voice,omitempty"`
+	Engine string `json:"engine,omitempty"`
+	Src    string `json:"src,omitempty"`
 }
 
 // Status is a snapshot of the queue for the /status endpoint.
@@ -49,21 +51,24 @@ type Queue struct {
 	current       *QueueItem
 	cancelCurrent context.CancelFunc
 
-	synth  Synthesizer
-	player Player
-	tmpDir string
-	logger *log.Logger
+	synths        map[string]Synthesizer
+	defaultEngine string
+	player        Player
+	tmpDir        string
+	logger        *log.Logger
 }
 
-// NewQueue constructs a Queue. synth is the synthesis engine selected at startup
-// (kokoro or polly); maxLen caps the number of pending items.
-func NewQueue(synth Synthesizer, player Player, tmpDir string, maxLen int, logger *log.Logger) *Queue {
+// NewQueue constructs a Queue. synths holds the enabled synthesizers keyed by
+// engine (e.g. "kokoro", "polly"); an item's Engine selects one, defaulting to
+// defaultEngine. maxLen caps the number of pending items.
+func NewQueue(synths map[string]Synthesizer, defaultEngine string, player Player, tmpDir string, maxLen int, logger *log.Logger) *Queue {
 	q := &Queue{
-		synth:  synth,
-		player: player,
-		tmpDir: tmpDir,
-		maxLen: maxLen,
-		logger: logger,
+		synths:        synths,
+		defaultEngine: defaultEngine,
+		player:        player,
+		tmpDir:        tmpDir,
+		maxLen:        maxLen,
+		logger:        logger,
 	}
 	q.cond = sync.NewCond(&q.mu)
 	return q
@@ -71,14 +76,14 @@ func NewQueue(synth Synthesizer, player Player, tmpDir string, maxLen int, logge
 
 // Enqueue appends a job and wakes the worker. It returns the job id and its
 // 1-based position in the pending queue, or ErrQueueFull.
-func (q *Queue) Enqueue(text, voice string) (id int64, position int, err error) {
+func (q *Queue) Enqueue(text, voice, engine string) (id int64, position int, err error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.items) >= q.maxLen {
 		return 0, 0, ErrQueueFull
 	}
 	q.nextID++
-	item := QueueItem{ID: q.nextID, Text: text, Voice: voice}
+	item := QueueItem{ID: q.nextID, Text: text, Voice: voice, Engine: engine}
 	q.items = append(q.items, item)
 	q.cond.Signal()
 	return item.ID, len(q.items), nil
@@ -148,9 +153,13 @@ func (q *Queue) Status() Status {
 	if q.current != nil {
 		current = new(*q.current)
 	}
+	ready := false
+	if s := q.synths[q.defaultEngine]; s != nil {
+		ready = s.Ready()
+	}
 	return Status{
 		Paused:      q.paused,
-		EngineReady: q.synth != nil && q.synth.Ready(),
+		EngineReady: ready,
 		QueueLength: len(q.items),
 		Current:     current,
 		Pending:     pending,
@@ -201,10 +210,20 @@ func (q *Queue) process(ctx context.Context, item QueueItem) {
 		return
 	}
 
-	wav := filepath.Join(q.tmpDir, fmt.Sprintf("tts-%d%s", item.ID, q.synth.Ext()))
+	eng := item.Engine
+	if eng == "" {
+		eng = q.defaultEngine
+	}
+	synth := q.synths[eng]
+	if synth == nil {
+		q.logger.Printf("job %d: no synthesizer for engine %q", item.ID, eng)
+		return
+	}
+
+	wav := filepath.Join(q.tmpDir, fmt.Sprintf("tts-%d%s", item.ID, synth.Ext()))
 	defer os.Remove(wav)
 
-	if err := q.synth.Synthesize(ctx, item.Text, item.Voice, wav); err != nil {
+	if err := synth.Synthesize(ctx, item.Text, item.Voice, wav); err != nil {
 		if ctx.Err() != nil {
 			q.logger.Printf("job %d skipped during synthesis", item.ID)
 		} else {

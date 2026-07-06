@@ -1,0 +1,20 @@
+# Voice map for the TTS server (default path; override with -voices).
+#
+# The server merges the sections for the engines it can run — kokoro always, Polly
+# only if this file has a [polly] section AND its AWS credentials resolve — into one
+# code -> voice map. Codes must be unique across sections.
+#
+# "!tts<code>" picks that voice. Bare "!tts" (or an unknown code) picks a
+# weighted-random voice from entries with weight > 0. weight = 0 means the voice is
+# reachable only by its explicit code and never enters the random pool — use it to
+# keep a paid Polly voice off the free/random default.
+
+[kokoro]                                        # local sidecar, always available (free)
+codes.a = { voice = "af_nicole", weight = 10 }
+codes.b = { voice = "am_adam",   weight = 10 }
+
+[polly]                                         # Amazon Polly (optional; needs ~/.aws)
+engine = "neural"                               # default tier for these voices
+# region = "us-east-1"                          # optional; else AWS_REGION / ~/.aws/config
+codes.k = { voice = "Kevin", weight = 0 }       # !ttsk only (explicit; US)
+codes.r = { voice = "Brian", weight = 2 }       # !ttsr, and occasionally random !tts (en-GB)

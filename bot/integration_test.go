@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"log"
-	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -43,7 +42,6 @@ func TestIntegrationRawIRCToHTTP(t *testing.T) {
 		cmds:     Commands{TTSPrefix: "!tts", Skip: "!skip", Pause: "!pause", Resume: "!resume", Clear: "!clear"},
 		minRole:  "everyone",
 		sfx:      map[string]struct{}{"!airhorn": {}},
-		voices:   &VoiceResolver{codes: defaultVoiceCodes(), rnd: rand.New(rand.NewSource(1))},
 		cooldown: NewCooldown(30 * time.Second),
 		sanitize: func(text string) (string, bool) { return Clean(text, nil, 200) },
 		tts:      NewTTSClient(srv.URL, ""),
@@ -73,8 +71,8 @@ func TestIntegrationRawIRCToHTTP(t *testing.T) {
 	if len(sayBodies) != 1 {
 		t.Fatalf("expected 1 /say, got %d", len(sayBodies))
 	}
-	if wantB := defaultVoiceCodes()["b"]; sayBodies[0]["voice"] != wantB { // "!ttsb" -> code b
-		t.Errorf("voice=%q want %q", sayBodies[0]["voice"], wantB)
+	if sayBodies[0]["code"] != "b" { // "!ttsb" forwards the raw code "b"
+		t.Errorf("code=%q want %q", sayBodies[0]["code"], "b")
 	}
 	if sayBodies[0]["text"] != "hello" { // emote stripped, prefix removed
 		t.Errorf("text=%q want %q", sayBodies[0]["text"], "hello")

@@ -3,7 +3,6 @@ package main
 import (
 	"io"
 	"log"
-	"math/rand"
 	"testing"
 	"time"
 )
@@ -14,10 +13,10 @@ type fakeTTS struct {
 	controls []string
 }
 
-type sayCall struct{ text, voice string }
+type sayCall struct{ text, code string }
 
-func (f *fakeTTS) Say(text, voice string) error {
-	f.says = append(f.says, sayCall{text, voice})
+func (f *fakeTTS) Say(text, code string) error {
+	f.says = append(f.says, sayCall{text, code})
 	return nil
 }
 func (f *fakeTTS) SFX(name string) error { f.sfx = append(f.sfx, name); return nil }
@@ -40,7 +39,6 @@ func newTestRouter(tts TTS) *Router {
 		cmds:     Commands{TTSPrefix: "!tts", Skip: "!skip", Pause: "!pause", Resume: "!resume", Clear: "!clear", SFX: "!sfx"},
 		minRole:  "everyone",
 		sfx:      map[string]struct{}{"!airhorn": {}, "!bruh": {}},
-		voices:   &VoiceResolver{codes: defaultVoiceCodes(), rnd: rand.New(rand.NewSource(1))},
 		cooldown: NewCooldown(30 * time.Second),
 		sanitize: func(text string) (string, bool) { return Clean(text, []string{"banned"}, 200) },
 		tts:      tts,
@@ -60,12 +58,13 @@ func TestRouterSayRandomAndCoded(t *testing.T) {
 	if len(f.says) != 2 {
 		t.Fatalf("says=%d want 2", len(f.says))
 	}
-	if f.says[0].text != "hello there" || !contains(allVoices, f.says[0].voice) {
-		t.Errorf("say0=%+v", f.says[0])
+	// Bare "!tts" forwards an empty code; "!ttsb" forwards the code "b". The server
+	// (not the bot) maps codes to voices now.
+	if f.says[0].text != "hello there" || f.says[0].code != "" {
+		t.Errorf("say0=%+v want text %q code %q", f.says[0], "hello there", "")
 	}
-	wantB := defaultVoiceCodes()["b"] // "!ttsb" resolves to whatever code b maps to
-	if f.says[1].voice != wantB {
-		t.Errorf("say1 voice=%q want %q", f.says[1].voice, wantB)
+	if f.says[1].code != "b" {
+		t.Errorf("say1 code=%q want b (from !ttsb)", f.says[1].code)
 	}
 }
 

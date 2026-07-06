@@ -29,7 +29,6 @@ func main() {
 		cmds:     cfg.Cmds,
 		minRole:  cfg.MinRole,
 		sfx:      cfg.SFX,
-		voices:   &VoiceResolver{codes: defaultVoiceCodes(), rnd: rnd},
 		cooldown: NewCooldown(cfg.Cooldown),
 		sanitize: func(text string) (string, bool) {
 			return Clean(text, cfg.Blocklist, cfg.MaxChars)

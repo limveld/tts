@@ -19,14 +19,9 @@ outputs = ["bin/tts-server"]
 run = "go build -o bin/tts-server ./server"
 
 [tasks."server:serve"]
-description = "Run the TTS server in the foreground (dev, kokoro engine)"
+description = "Run the TTS server in the foreground (dev); voices/engines come from voices.toml"
 depends = ["server:build"]
 run = "./bin/tts-server"
-
-[tasks."server:serve:polly"]
-description = "Run the TTS server with the Amazon Polly engine (needs AWS creds in ~/.aws or env)"
-depends = ["server:build"]
-run = "./bin/tts-server -engine polly"
 
 [tasks."server:service:install"]
 description = "Install & start the TTS server launchd service (auto-start at login)"
