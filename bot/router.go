@@ -2,8 +2,13 @@ package main
 
 import (
 	"log"
+	"math/rand"
 	"sort"
 	"strings"
+	"sync"
+	"time"
+
+	"tts/store"
 )
 
 // Commands holds the configurable chat command words (all lowercase).
@@ -24,8 +29,13 @@ type Router struct {
 	cooldown *Cooldown
 	sanitize func(text string) (string, bool) // wraps Clean with blocklist+maxChars
 	tts      TTS
-	chat     Chat // may be nil when the bot isn't authenticated (replies disabled)
+	chat     Chat          // may be nil when the bot isn't authenticated (replies disabled)
+	store    *store.Store  // custom commands (may be nil → command engine disabled)
+	rnd      *rand.Rand    // for $random substitution
 	logger   *log.Logger
+
+	cdMu        sync.Mutex           // guards cmdCooldown
+	cmdCooldown map[string]time.Time // per-command global cooldown
 }
 
 // Handle processes one chat message.
@@ -76,6 +86,12 @@ func (r *Router) Handle(m ChatMessage) {
 		return
 	}
 
+	// Command engine: admin CRUD (!addcom…), the dynamic !commands/!voices, and
+	// custom stored commands. Runs after the built-ins above so those always win.
+	if r.handleCommands(cmd, rest, m) {
+		return
+	}
+
 	// TTS: "!tts" (random voice) or "!tts<code>" (specific voice). The code is
 	// forwarded to the server, which owns the code→voice map (per engine).
 	if !strings.HasPrefix(cmd, r.cmds.TTSPrefix) {
@@ -103,15 +119,18 @@ func (r *Router) Handle(m ChatMessage) {
 	r.logger.Printf("spoke [%s] for %s: %q", code, m.User, clean)
 }
 
-func (r *Router) eligible(m ChatMessage) bool {
-	switch r.minRole {
+func (r *Router) eligible(m ChatMessage) bool { return r.roleAllows(r.minRole, m) }
+
+// roleAllows reports whether m meets the given minimum role (everyone|sub|vip|mod).
+func (r *Router) roleAllows(role string, m ChatMessage) bool {
+	switch role {
 	case "mod":
 		return m.IsMod || m.IsBroadcaster
 	case "vip":
 		return m.IsVIP || m.IsMod || m.IsBroadcaster
 	case "sub":
 		return m.IsSub || m.IsVIP || m.IsMod || m.IsBroadcaster
-	default: // "everyone"
+	default: // "everyone" (or unset)
 		return true
 	}
 }

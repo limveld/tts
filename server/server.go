@@ -46,6 +46,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/clear", s.auth(s.post(s.handleClear)))
 	mux.HandleFunc("/skip", s.auth(s.post(s.handleSkip)))
 	mux.HandleFunc("/status", s.auth(s.handleStatus))
+	mux.HandleFunc("/voices", s.auth(s.handleVoices))
 	if s.overlay != nil {
 		s.overlay.routes(mux) // /overlay* — auth via ?token= query param
 	}
@@ -193,6 +194,15 @@ func (s *Server) handleSkip(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.queue.Status())
+}
+
+// handleVoices returns the code→voice map for the enabled engines (the bot's !voices).
+func (s *Server) handleVoices(w http.ResponseWriter, r *http.Request) {
+	var list []VoiceEntry
+	if s.voices != nil {
+		list = s.voices.List()
+	}
+	writeJSON(w, http.StatusOK, list)
 }
 
 func writeJSON(w http.ResponseWriter, code int, body any) {

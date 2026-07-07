@@ -11,6 +11,7 @@ type fakeTTS struct {
 	says     []sayCall
 	sfx      []string
 	controls []string
+	voices   []VoiceInfo
 }
 
 type sayCall struct{ text, code string }
@@ -19,7 +20,8 @@ func (f *fakeTTS) Say(text, code string) error {
 	f.says = append(f.says, sayCall{text, code})
 	return nil
 }
-func (f *fakeTTS) SFX(name string) error { f.sfx = append(f.sfx, name); return nil }
+func (f *fakeTTS) SFX(name string) error                { f.sfx = append(f.sfx, name); return nil }
+func (f *fakeTTS) Voices() ([]VoiceInfo, error)         { return f.voices, nil }
 func (f *fakeTTS) Pause() error          { f.controls = append(f.controls, "pause"); return nil }
 func (f *fakeTTS) Resume() error         { f.controls = append(f.controls, "resume"); return nil }
 func (f *fakeTTS) Clear() error          { f.controls = append(f.controls, "clear"); return nil }
@@ -27,10 +29,18 @@ func (f *fakeTTS) Skip() error           { f.controls = append(f.controls, "skip
 
 type replyCall struct{ broadcasterID, parentID, text string }
 
-type fakeChat struct{ replies []replyCall }
+type fakeChat struct {
+	replies []replyCall
+	sends   []string
+}
 
 func (f *fakeChat) Reply(broadcasterID, parentID, text string) error {
 	f.replies = append(f.replies, replyCall{broadcasterID, parentID, text})
+	return nil
+}
+
+func (f *fakeChat) Send(broadcasterID, text string) error {
+	f.sends = append(f.sends, text)
 	return nil
 }
 

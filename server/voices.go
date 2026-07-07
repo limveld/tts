@@ -87,6 +87,23 @@ type VoiceMap struct {
 	rnd    *rand.Rand
 }
 
+// VoiceEntry is one code's public mapping, served by GET /voices (the bot's !voices).
+type VoiceEntry struct {
+	Code   string `json:"code"`
+	Engine string `json:"engine"`
+	Voice  string `json:"voice"`
+}
+
+// List returns the enabled code→voice entries, sorted by code.
+func (m *VoiceMap) List() []VoiceEntry {
+	out := make([]VoiceEntry, 0, len(m.order))
+	for _, code := range m.order {
+		e := m.byCode[code]
+		out = append(out, VoiceEntry{Code: code, Engine: e.engine, Voice: e.voice})
+	}
+	return out
+}
+
 // Resolver builds a VoiceMap containing only the codes whose engine is enabled, so
 // a code for a disabled engine (e.g. Polly failed to init) falls through to the
 // weighted-random pool of the engines that are up.

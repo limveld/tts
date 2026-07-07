@@ -12,3 +12,8 @@ mise.local.toml
 
 # Bot OAuth tokens (secret/state written by `mise run bot:auth`).
 /bot.tokens.json
+
+# Bot SQLite database (custom commands, points) + WAL sidecars.
+/bot.db
+/bot.db-shm
+/bot.db-wal

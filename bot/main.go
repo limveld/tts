@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"tts/store"
 	"tts/twitch"
 )
 
@@ -23,6 +24,13 @@ func main() {
 	if err != nil {
 		logger.Fatalf("config: %v", err)
 	}
+
+	db, err := store.Open(cfg.DBPath)
+	if err != nil {
+		logger.Fatalf("store %s: %v", cfg.DBPath, err)
+	}
+	defer db.Close()
+	seedCommands(db, logger)
 
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 	router := &Router{
@@ -35,6 +43,8 @@ func main() {
 		},
 		tts:    NewTTSClient(cfg.TTSURL, cfg.TTSToken),
 		chat:   buildChat(cfg, logger),
+		store:  db,
+		rnd:    rnd,
 		logger: logger,
 	}
 
@@ -48,6 +58,31 @@ func main() {
 	logger.Printf("shutting down")
 }
 
+// seedCommands inserts a few starter stored-text commands (migrated from
+// StreamElements) when the commands table is empty, so a fresh DB isn't blank.
+// !commands and !voices are dynamic built-ins, so they're not seeded.
+func seedCommands(db *store.Store, logger *log.Logger) {
+	names, err := db.List()
+	if err != nil {
+		logger.Printf("seed: %v", err)
+		return
+	}
+	if len(names) > 0 {
+		return
+	}
+	for _, c := range []store.Command{
+		{Name: "ttshelp", Response: "Type !tts <message> and I'll read it. Pick a voice with a code like !ttsk — see !voices."},
+		{Name: "discord", Response: "Discord: (set me with !editcom !discord <link>)"},
+		{Name: "socials", Response: "Socials: (set me with !editcom !socials <links>)"},
+		{Name: "schedule", Response: "Schedule: (set me with !editcom !schedule <text>)"},
+	} {
+		if _, err := db.Add(c); err != nil {
+			logger.Printf("seed %q: %v", c.Name, err)
+		}
+	}
+	logger.Printf("seeded starter commands (edit with !editcom)")
+}
+
 // buildChat returns a Chat sender when Twitch credentials and a saved token are
 // both present; otherwise nil, so the bot still runs read-only (replies just
 // no-op with a log line until `mise run bot:auth` is done).
@@ -55,8 +90,8 @@ func buildChat(cfg Config, logger *log.Logger) Chat {
 	if cfg.TwitchClientID == "" || cfg.TwitchSecret == "" {
 		return nil
 	}
-	store := twitch.NewStore(cfg.TokenStore)
-	tok, err := store.Load()
+	tokStore := twitch.NewStore(cfg.TokenStore)
+	tok, err := tokStore.Load()
 	if err != nil {
 		logger.Printf("twitch: token store: %v", err)
 		return nil
@@ -65,7 +100,7 @@ func buildChat(cfg Config, logger *log.Logger) Chat {
 		logger.Printf("twitch: no saved token — run 'mise run bot:auth' to enable chat replies")
 		return nil
 	}
-	client := twitch.NewClient(cfg.TwitchClientID, cfg.TwitchSecret, store)
+	client := twitch.NewClient(cfg.TwitchClientID, cfg.TwitchSecret, tokStore)
 	client.SetToken(tok)
 	logger.Printf("twitch: chat replies enabled as %s", tok.Login)
 	return NewChatSender(client)

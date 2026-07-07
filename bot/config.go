@@ -27,6 +27,8 @@ type Config struct {
 	TwitchClientID string
 	TwitchSecret   string
 	TokenStore     string
+
+	DBPath string // SQLite database for custom commands (Stage 2+)
 }
 
 // LoadConfig parses flags/env and an optional JSON config file (blocklist).
@@ -52,6 +54,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&c.TwitchClientID, "twitch-client-id", os.Getenv("TWITCH_CLIENT_ID"), "Twitch app client id (env TWITCH_CLIENT_ID); enables chat replies")
 	fs.StringVar(&c.TwitchSecret, "twitch-client-secret", os.Getenv("TWITCH_CLIENT_SECRET"), "Twitch app client secret (env TWITCH_CLIENT_SECRET)")
 	fs.StringVar(&c.TokenStore, "twitch-token-store", "bot.tokens.json", "path to the OAuth token store written by bot-auth")
+	fs.StringVar(&c.DBPath, "db", "bot.db", "SQLite database for custom commands")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}

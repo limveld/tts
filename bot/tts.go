@@ -14,10 +14,18 @@ import (
 type TTS interface {
 	Say(text, code string) error
 	SFX(name string) error
+	Voices() ([]VoiceInfo, error)
 	Pause() error
 	Resume() error
 	Clear() error
 	Skip() error
+}
+
+// VoiceInfo is one code→voice entry from the server's GET /voices (for !voices).
+type VoiceInfo struct {
+	Code   string `json:"code"`
+	Engine string `json:"engine"`
+	Voice  string `json:"voice"`
 }
 
 // TTSClient talks to the TTS server's HTTP API.
@@ -43,6 +51,30 @@ func (c *TTSClient) Say(text, code string) error {
 func (c *TTSClient) SFX(name string) error {
 	body, _ := json.Marshal(map[string]string{"name": name})
 	return c.post("/sfx", body)
+}
+
+// Voices fetches the server's code→voice map (GET /voices) for the !voices command.
+func (c *TTSClient) Voices() ([]VoiceInfo, error) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/voices", nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("/voices -> %s", resp.Status)
+	}
+	var list []VoiceInfo
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return nil, err
+	}
+	return list, nil
 }
 
 func (c *TTSClient) Pause() error  { return c.post("/pause", nil) }
