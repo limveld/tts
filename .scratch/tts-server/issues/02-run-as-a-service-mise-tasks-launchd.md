@@ -66,3 +66,12 @@ Verified: 10 mise tasks listed; `mise run build` → 8.3 MB `tts`; `deploy/servi
 → valid plist (`plutil -lint: OK`) with all placeholders resolved to absolute paths;
 `service:status` → "not loaded" + healthz "not responding"; `launchctl print` confirms the
 agent is not registered. Not committed (left for review).
+
+### 2026-07-07 — added `mise run reload`
+
+One command to apply edits to `sfx.toml`/`voices.toml` **or Go code**: rebuilds both binaries
+(mtime-gated via `server:build`/`bot:build`), runs `sfx:fetch`, then restarts both launchd
+services. Rule: `reload` for config/code changes (no reinstall); `*:service:install` only when the
+**plist** changes (flags/args, `EnvironmentVariables`, `WorkingDirectory`, template, or `service.sh`
+render). Auto-reload (in-process file-watch/hot-swap) was considered and **rejected** — config is
+edited off-air, so a restart blip is free and watching would be over-engineering.
