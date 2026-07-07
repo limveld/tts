@@ -1,6 +1,6 @@
 # Native Go bot: make it reply-capable + replace StreamElements
 
-Status: in progress — Stage 1 (auth + reply) done
+Status: in progress — Stage 2 (custom commands + timers) done
 Type: task
 Created: 2026-07-03
 
@@ -118,3 +118,30 @@ client id/secret, run `mise run bot:auth` once.
 user's Twitch app + browser consent). **Deferred:** Stage 2 (custom commands + timers)
 and Stage 3 (loyalty points), each adding `modernc.org/sqlite` on this `Chat`/`Sender`
 seam.
+
+### 2026-07-07 — Stage 2 (custom commands + timers) implemented
+
+Shipped in two commits.
+
+- **Store** (`store/` package): the blessed dep `modernc.org/sqlite` (pure-Go, no CGo). A
+  `commands(name, response, cooldown, min_role, count)` table with `Add`/`SetResponse`/`Delete`/
+  `Get`/`List`/`IncCount`. Stage 3's points/redeems will join the same DB (no migration).
+- **Custom commands** (`bot/commands.go` + `bot/substitute.go`): `!addcom`/`!editcom`/`!delcom`
+  (mod-only, guarded against shadowing built-ins), custom dispatch with variable substitution
+  (`$user`/`$args`/`$1..$9`/`$touser`/`$count`/`$random`), per-command **global** cooldowns (mods
+  exempt) and `min_role` gating. Slots into `router.go` after the built-ins (which win). A fresh DB
+  is seeded with starter commands (ttshelp/discord/socials/schedule).
+- **Dynamic built-ins:** `!commands` (lists stored commands) and `!voices` (via a new **`GET /voices`**
+  on the TTS server — `VoiceMap.List()` — keeping the bot decoupled from `voices.toml`).
+- **Timers** (`bot/timers.go`): `timers.toml` `[[timer]]` (name/message/interval/min_lines); each posts
+  on its interval **only if ≥ min_lines** chat messages arrived since its last post. The bot counts
+  lines + caches the broadcaster id from room-id tags, so timers post (plain `Chat.Send`) with no
+  triggering message.
+
+Decisions this pass (grilled): SQLite now; `!commands`+`!voices` dynamic (server `/voices`); core
+variable set (**`$uptime` deferred** — needs Helix Get Streams); timers **config-defined** for v1
+(chat-managed `!addtimer` deferred); command responses are threaded replies, timers plain sends;
+per-command cooldowns are global. `go build/vet/test ./...` clean (store + substitute + dispatch +
+timer-gate tests); `GET /voices` and the seed/startup path smoke-verified. Live chat needs the user's
+Twitch auth. **Next:** Stage 3 — loyalty points (watch-time accrual, `!points`/`!gamble`/`!redeem`/
+`!give`/`!leaderboard`) on this same store.
