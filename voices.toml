@@ -10,11 +10,12 @@
 # keep a paid Polly voice off the free/random default.
 
 [kokoro]                                        # local sidecar, always available (free)
-codes.a = { voice = "af_nicole", weight = 10 }
-codes.b = { voice = "am_adam",   weight = 10 }
+codes.n = { voice = "af_nicole", weight = 10 }
+codes.a = { voice = "am_adam",   weight = 10 }
 
 [polly]                                         # Amazon Polly (optional; needs ~/.aws)
-engine = "neural"                               # default tier for these voices
+engine = "standard"                               # default tier for these voices
 # region = "us-east-1"                          # optional; else AWS_REGION / ~/.aws/config
-codes.k = { voice = "Kevin", weight = 0 }       # !ttsk only (explicit; US)
-codes.r = { voice = "Brian", weight = 2 }       # !ttsr, and occasionally random !tts (en-GB)
+codes.k = { voice = "Kevin", weight = 5 }       # !ttsk only (explicit; US)
+codes.b = { voice = "Brian", weight = 5 }       # !ttsr, and occasionally random !tts (en-GB)
+codes.g = { voice = "Giorgio", weight = 5 }     #todo add per voice overrides since kevin works only in neutral but giorgio works in standard
