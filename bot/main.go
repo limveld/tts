@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -51,7 +52,32 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	irc := &IRCClient{channel: cfg.Channel, logger: logger, rnd: rnd, handle: router.Handle}
+	// Count chat lines and remember the channel's broadcaster id (from room-id
+	// tags) so timers can gate on activity and post without a triggering message.
+	var lineCount atomic.Int64
+	var roomID atomic.Pointer[string]
+	handle := func(m ChatMessage) {
+		lineCount.Add(1)
+		if m.RoomID != "" {
+			id := m.RoomID
+			roomID.Store(&id)
+		}
+		router.Handle(m)
+	}
+
+	if router.chat != nil && len(cfg.Timers) > 0 {
+		timers := NewTimers(cfg.Timers, router.chat, lineCount.Load,
+			func() string {
+				if p := roomID.Load(); p != nil {
+					return *p
+				}
+				return ""
+			}, logger)
+		go timers.Run(ctx)
+		logger.Printf("timers: %d configured", len(cfg.Timers))
+	}
+
+	irc := &IRCClient{channel: cfg.Channel, logger: logger, rnd: rnd, handle: handle}
 	logger.Printf("tts-bot: channel=#%s tts=%s cooldown=%s min-role=%s sfx=%d",
 		cfg.Channel, cfg.TTSURL, cfg.Cooldown, cfg.MinRole, len(cfg.SFX))
 	irc.Run(ctx)

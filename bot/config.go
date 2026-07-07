@@ -28,7 +28,8 @@ type Config struct {
 	TwitchSecret   string
 	TokenStore     string
 
-	DBPath string // SQLite database for custom commands (Stage 2+)
+	DBPath string        // SQLite database for custom commands (Stage 2+)
+	Timers []TimerConfig // interval announcements
 }
 
 // LoadConfig parses flags/env and an optional JSON config file (blocklist).
@@ -55,6 +56,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&c.TwitchSecret, "twitch-client-secret", os.Getenv("TWITCH_CLIENT_SECRET"), "Twitch app client secret (env TWITCH_CLIENT_SECRET)")
 	fs.StringVar(&c.TokenStore, "twitch-token-store", "bot.tokens.json", "path to the OAuth token store written by bot-auth")
 	fs.StringVar(&c.DBPath, "db", "bot.db", "SQLite database for custom commands")
+	var timersPath string
+	fs.StringVar(&timersPath, "timers-config", "timers.toml", "timers TOML ([[timer]] announcements); optional")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -92,6 +95,13 @@ func LoadConfig(args []string) (Config, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return c, fmt.Errorf("reading sfx config: %w", err)
 	}
+
+	// Timers: interval announcements (opt-in; missing file = none).
+	timers, err := LoadTimersConfig(timersPath)
+	if err != nil {
+		return c, fmt.Errorf("timers config: %w", err)
+	}
+	c.Timers = timers
 
 	// Chat is matched lowercased, so normalize command words.
 	c.Cmds.TTSPrefix = strings.ToLower(c.Cmds.TTSPrefix)

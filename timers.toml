@@ -1,0 +1,18 @@
+# Timers: interval chat announcements, gated on activity.
+#
+# Each [[timer]] posts `message` every `interval`, but only if at least `min_lines`
+# chat messages have arrived since its last post (so it won't fire into a dead
+# chat). Uncomment/add entries; an empty or missing file means no timers.
+# After editing: `mise run reload`.
+
+# [[timer]]
+# name = "discord"
+# message = "Join the Discord: discord.gg/your-invite"
+# interval = "20m"      # Go duration: 90s, 15m, 1h30m
+# min_lines = 15
+
+# [[timer]]
+# name = "tts"
+# message = "You can make me talk! Type !tts <message>  — see !voices for voice codes."
+# interval = "25m"
+# min_lines = 20
