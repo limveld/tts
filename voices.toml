@@ -16,6 +16,6 @@ codes.a = { voice = "am_adam",   weight = 10 }
 [polly]                                         # Amazon Polly (optional; needs ~/.aws)
 engine = "standard"                               # default tier for these voices
 # region = "us-east-1"                          # optional; else AWS_REGION / ~/.aws/config
-codes.k = { voice = "Kevin", weight = 5 }       # !ttsk only (explicit; US)
+codes.k = { voice = "Kevin", weight = 5, engine = "neural" }  # Kevin is neural-only (US)
 codes.b = { voice = "Brian", weight = 5 }       # !ttsr, and occasionally random !tts (en-GB)
 codes.g = { voice = "Giorgio", weight = 5 }     #todo add per voice overrides since kevin works only in neutral but giorgio works in standard
