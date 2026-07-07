@@ -155,13 +155,13 @@ func (s *Server) handleSfx(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
-	path, ok := s.sfx.pick(name)
+	clip, ok := s.sfx.pick(name)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sound"})
 		return
 	}
 
-	id, position, err := s.queue.EnqueueSFX(name, path)
+	id, position, err := s.queue.EnqueueSFX(name, clip.path, clip.volume, clip.start, clip.end)
 	if err != nil {
 		if errors.Is(err, ErrQueueFull) {
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "queue is full"})

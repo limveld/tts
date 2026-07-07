@@ -28,14 +28,17 @@ type recPlayer struct {
 }
 
 type playRec struct {
-	base string
-	data string
+	base   string
+	data   string
+	volume int
+	start  float64
+	end    float64
 }
 
-func (p *recPlayer) Play(_ context.Context, _ int64, clip string) error {
-	data, _ := os.ReadFile(clip)
+func (p *recPlayer) Play(_ context.Context, clip Playback) error {
+	data, _ := os.ReadFile(clip.Path)
 	p.mu.Lock()
-	p.plays = append(p.plays, playRec{base: filepath.Base(clip), data: string(data)})
+	p.plays = append(p.plays, playRec{base: filepath.Base(clip.Path), data: string(data), volume: clip.Volume, start: clip.Start, end: clip.End})
 	p.mu.Unlock()
 	if p.ch != nil {
 		p.ch <- struct{}{}
@@ -121,6 +124,39 @@ func TestSFXEnqueueAndPlay(t *testing.T) {
 	}
 }
 
+func TestSFXVolumeAndTrim(t *testing.T) {
+	dir := t.TempDir()
+	writeClip(t, dir, "loud.mp3", "LOUD")
+	writeClip(t, dir, "plain.mp3", "PLAIN")
+	vol := 40
+	lib := map[string][]sfxlib.Clip{
+		"loud":  {{File: "loud.mp3", Volume: &vol, Start: 1.5, End: 4}},
+		"plain": {{File: "plain.mp3"}}, // no controls -> volume 100, no trim
+	}
+	player := &recPlayer{ch: make(chan struct{}, 4)}
+	ts := newSFXTestServer(t, lib, dir, player)
+
+	if code := postSFX(t, ts, "loud"); code != http.StatusAccepted {
+		t.Fatalf("loud status=%d want 202", code)
+	}
+	waitPlay(t, player.ch)
+	if code := postSFX(t, ts, "plain"); code != http.StatusAccepted {
+		t.Fatalf("plain status=%d want 202", code)
+	}
+	waitPlay(t, player.ch)
+
+	recs := player.records()
+	if len(recs) != 2 {
+		t.Fatalf("plays=%d want 2", len(recs))
+	}
+	if recs[0].volume != 40 || recs[0].start != 1.5 || recs[0].end != 4 {
+		t.Errorf("loud controls=%+v want volume 40 start 1.5 end 4", recs[0])
+	}
+	if recs[1].volume != 100 || recs[1].start != 0 || recs[1].end != 0 {
+		t.Errorf("plain controls=%+v want default volume 100 no trim", recs[1])
+	}
+}
+
 func TestSFXRandomClip(t *testing.T) {
 	dir := t.TempDir()
 	writeClip(t, dir, "m1.mp3", "ONE")
@@ -155,7 +191,7 @@ type blockPlayer struct {
 	result  chan error
 }
 
-func (p *blockPlayer) Play(ctx context.Context, _ int64, _ string) error {
+func (p *blockPlayer) Play(ctx context.Context, _ Playback) error {
 	p.started <- struct{}{}
 	<-ctx.Done()
 	p.result <- ctx.Err()

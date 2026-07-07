@@ -70,7 +70,7 @@ func (o *Overlay) broadcast(event string, data []byte) {
 // (via /overlay/done), the ctx is canceled (skip -> also halts the page), or
 // maxWait elapses (safety net if the page never acks). If no client is
 // connected it returns immediately so the queue never stalls.
-func (o *Overlay) Play(ctx context.Context, id int64, url string, maxWait time.Duration) error {
+func (o *Overlay) Play(ctx context.Context, id int64, url string, maxWait time.Duration, volume int, start, end float64) error {
 	if o.clientCount() == 0 {
 		o.logger.Printf("overlay: no browser source connected, dropping clip %d", id)
 		return nil
@@ -86,7 +86,7 @@ func (o *Overlay) Play(ctx context.Context, id int64, url string, maxWait time.D
 		o.mu.Unlock()
 	}()
 
-	data, _ := json.Marshal(map[string]any{"id": id, "url": url})
+	data, _ := json.Marshal(map[string]any{"id": id, "url": url, "volume": volume, "start": start, "end": end})
 	o.broadcast("play", data)
 
 	timer := time.NewTimer(maxWait)
@@ -229,21 +229,24 @@ func NewBrowserPlayer(o *Overlay, logger *log.Logger) *BrowserPlayer {
 	return &BrowserPlayer{overlay: o, logger: logger}
 }
 
-func (p *BrowserPlayer) Play(ctx context.Context, id int64, clip string) error {
-	ext := filepath.Ext(clip)
+func (p *BrowserPlayer) Play(ctx context.Context, clip Playback) error {
+	ext := filepath.Ext(clip.Path)
 	if ext == "" {
 		ext = ".wav"
 	}
-	url := fmt.Sprintf("/overlay/clip/%d%s", id, ext)
-	// Bound the wait so a disconnect can't stall the queue indefinitely. For our
-	// WAVs we can size it from the file; compressed clips (sfx mp3) don't map
-	// linearly, so use a generous fixed cap — the page still acks early on
-	// <audio> "ended", so this is only a safety net.
+	url := fmt.Sprintf("/overlay/clip/%d%s", clip.ID, ext)
+	// Bound the wait so a disconnect can't stall the queue indefinitely. A trimmed
+	// clip runs end-start; otherwise size WAVs from the file, and use a generous cap
+	// for compressed clips (sfx mp3). The page still acks early on "ended"/trim-end,
+	// so this is only a safety net.
 	maxWait := 60 * time.Second
-	if ext == ".wav" {
-		maxWait = estimateWavDuration(clip) + 10*time.Second
+	switch {
+	case clip.End > clip.Start:
+		maxWait = time.Duration((clip.End-clip.Start)*float64(time.Second)) + 10*time.Second
+	case ext == ".wav":
+		maxWait = estimateWavDuration(clip.Path) + 10*time.Second
 	}
-	return p.overlay.Play(ctx, id, url, maxWait)
+	return p.overlay.Play(ctx, clip.ID, url, maxWait, clip.Volume, clip.Start, clip.End)
 }
 
 // estimateWavDuration estimates a clip's length from its file size (our TTS
@@ -280,15 +283,37 @@ function connect() {
     const d = JSON.parse(ev.data);
     const audio = new Audio(d.url + q);
     current = audio;
-    const done = () => fetch('/overlay/done' + q, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({id: d.id}),
-      keepalive: true
-    }).catch(() => {});
+    // volume: 0-100 percent -> 0-1 (reduce-only; <audio> caps at 1.0).
+    if (typeof d.volume === 'number') audio.volume = Math.max(0, Math.min(1, d.volume / 100));
+    let acked = false;
+    const done = () => {
+      if (acked) return; acked = true;
+      fetch('/overlay/done' + q, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: d.id}),
+        keepalive: true
+      }).catch(() => {});
+    };
+    // trim end: stop and ack once we reach d.end (natural 'ended' also acks).
+    if (d.end > 0) {
+      audio.addEventListener('timeupdate', () => {
+        if (audio.currentTime >= d.end) { audio.pause(); done(); }
+      });
+    }
     audio.addEventListener('ended', done);
     audio.addEventListener('error', done);
-    audio.play().catch(e => { console.error('tts play blocked:', e); done(); });
+    const play = () => audio.play().catch(e => { console.error('tts play blocked:', e); done(); });
+    // trim start: seek before playing so there's no blip from 0 (needs metadata).
+    if (d.start > 0) {
+      audio.addEventListener('loadedmetadata', () => {
+        try { audio.currentTime = d.start; } catch (e) {}
+        play();
+      }, {once: true});
+      audio.load();
+    } else {
+      play();
+    }
   });
   es.addEventListener('stop', () => {
     if (current) { current.pause(); current = null; }

@@ -19,12 +19,15 @@ var ErrQueueFull = errors.New("queue is full")
 // file at Src (Text holds the sound's command name, for logging/status). Engine ""
 // means the queue's default engine.
 type QueueItem struct {
-	ID     int64  `json:"id"`
-	Kind   string `json:"kind,omitempty"`
-	Text   string `json:"text"`
-	Voice  string `json:"voice,omitempty"`
-	Engine string `json:"engine,omitempty"`
-	Src    string `json:"src,omitempty"`
+	ID     int64   `json:"id"`
+	Kind   string  `json:"kind,omitempty"`
+	Text   string  `json:"text"`
+	Voice  string  `json:"voice,omitempty"`
+	Engine string  `json:"engine,omitempty"`
+	Src    string  `json:"src,omitempty"`
+	Volume int     `json:"volume,omitempty"` // sfx: 0-100 percent
+	Start  float64 `json:"start,omitempty"`  // sfx: trim start (seconds)
+	End    float64 `json:"end,omitempty"`    // sfx: trim end (seconds; 0 = to end)
 }
 
 // Status is a snapshot of the queue for the /status endpoint.
@@ -92,14 +95,14 @@ func (q *Queue) Enqueue(text, voice, engine string) (id int64, position int, err
 // EnqueueSFX appends a sound-effect job (a pre-recorded clip at srcPath, played
 // through the same worker as TTS) and wakes the worker. name is the sound's
 // command, used only for logging/status.
-func (q *Queue) EnqueueSFX(name, srcPath string) (id int64, position int, err error) {
+func (q *Queue) EnqueueSFX(name, srcPath string, volume int, start, end float64) (id int64, position int, err error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.items) >= q.maxLen {
 		return 0, 0, ErrQueueFull
 	}
 	q.nextID++
-	item := QueueItem{ID: q.nextID, Kind: "sfx", Text: name, Src: srcPath}
+	item := QueueItem{ID: q.nextID, Kind: "sfx", Text: name, Src: srcPath, Volume: volume, Start: start, End: end}
 	q.items = append(q.items, item)
 	q.cond.Signal()
 	return item.ID, len(q.items), nil
@@ -233,7 +236,7 @@ func (q *Queue) process(ctx context.Context, item QueueItem) {
 	}
 
 	q.logger.Printf("job %d playing", item.ID)
-	q.play(ctx, item.ID, wav)
+	q.play(ctx, Playback{ID: item.ID, Path: wav, Volume: 100})
 }
 
 // processSFX plays a pre-recorded clip. The clip is copied into the temp dir as
@@ -252,20 +255,20 @@ func (q *Queue) processSFX(ctx context.Context, item QueueItem) {
 	defer os.Remove(clip)
 
 	q.logger.Printf("job %d playing sfx %q", item.ID, item.Text)
-	q.play(ctx, item.ID, clip)
+	q.play(ctx, Playback{ID: item.ID, Path: clip, Volume: item.Volume, Start: item.Start, End: item.End})
 }
 
 // play plays clip and logs the outcome (a skip cancels ctx).
-func (q *Queue) play(ctx context.Context, id int64, clip string) {
-	if err := q.player.Play(ctx, id, clip); err != nil {
+func (q *Queue) play(ctx context.Context, clip Playback) {
+	if err := q.player.Play(ctx, clip); err != nil {
 		if ctx.Err() != nil {
-			q.logger.Printf("job %d playback skipped", id)
+			q.logger.Printf("job %d playback skipped", clip.ID)
 		} else {
-			q.logger.Printf("job %d playback error: %v", id, err)
+			q.logger.Printf("job %d playback error: %v", clip.ID, err)
 		}
 		return
 	}
-	q.logger.Printf("job %d done", id)
+	q.logger.Printf("job %d done", clip.ID)
 }
 
 // copyFile copies src to dst (used to stage an sfx clip into the temp dir).

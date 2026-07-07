@@ -50,7 +50,7 @@ url = "https://www.myinstants.com/media/sounds/fahhh_KcgAXfs.mp3"
 
 [sounds.mbappe]
 file = "dictator-mbappe-meme.mp3"
-volume = ""
+volume = 50
 url = "https://www.myinstants.com/media/sounds/dictator-mbappe-meme.mp3"
 
 [sounds.dong]

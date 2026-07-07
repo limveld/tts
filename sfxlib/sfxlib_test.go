@@ -61,6 +61,48 @@ url = "https://example.com/x.mp3"
 	}
 }
 
+func TestLoadVolumeAndTrim(t *testing.T) {
+	path := writeTOML(t, `
+[sounds.quiet]
+file = "q.mp3"
+volume = 30
+start = 2.5
+end = 6
+
+[[sounds.multi.clips]]
+file = "m1.mp3"
+volume = 80
+[[sounds.multi.clips]]
+file = "m2.mp3"
+`)
+	lib, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	q := lib["quiet"][0]
+	if q.Volume == nil || *q.Volume != 30 || q.Start != 2.5 || q.End != 6 {
+		t.Errorf("quiet=%+v (volume=%v)", q, q.Volume)
+	}
+	m := lib["multi"]
+	if m[0].Volume == nil || *m[0].Volume != 80 {
+		t.Errorf("multi[0] volume=%v want 80", m[0].Volume)
+	}
+	if m[1].Volume != nil {
+		t.Errorf("multi[1] volume=%v want nil (default full)", m[1].Volume)
+	}
+}
+
+func TestLoadRejectsBadVolumeAndTrim(t *testing.T) {
+	for _, body := range []string{
+		"[sounds.a]\nfile = \"a.mp3\"\nvolume = 150\n", // volume out of range
+		"[sounds.a]\nfile = \"a.mp3\"\nstart = 5\nend = 3\n", // end <= start
+	} {
+		if _, err := Load(writeTOML(t, body)); err == nil {
+			t.Errorf("expected an error for %q", body)
+		}
+	}
+}
+
 func keys(m map[string][]Clip) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
