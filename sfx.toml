@@ -10,7 +10,7 @@
 #          button (data-url="/media/sounds/<slug>.mp3") — the slug has a random
 #          suffix, so read it from the button rather than guessing.
 #
-# After editing: run `mise run sfx:fetch`, then restart the server and bot.
+# After editing: run `mise run reload` (rebuilds, fetches clips, restarts server + bot).
 
 [sounds.c]
 file = "im-gonna-come_6HehWm4.mp3"
@@ -50,7 +50,8 @@ url = "https://www.myinstants.com/media/sounds/fahhh_KcgAXfs.mp3"
 
 [sounds.mbappe]
 file = "dictator-mbappe-meme.mp3"
-volume = 50
+volume = 10
+start = 1
 url = "https://www.myinstants.com/media/sounds/dictator-mbappe-meme.mp3"
 
 [sounds.dong]

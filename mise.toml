@@ -10,6 +10,15 @@ run = [
   "./.venv/bin/pip install -r pysidecar/requirements.txt",
 ]
 
+[tasks.reload]
+description = "Apply edits: rebuild binaries (if changed), fetch sfx clips, restart both services"
+depends = ["server:build", "bot:build"]
+run = '''
+mise run sfx:fetch
+mise run server:service:restart
+mise run bot:service:restart
+'''
+
 # ---- server ----------------------------------------------------------------
 
 [tasks."server:build"]
