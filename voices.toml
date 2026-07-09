@@ -18,4 +18,4 @@ engine = "standard"                               # default tier for these voice
 # region = "us-east-1"                          # optional; else AWS_REGION / ~/.aws/config
 codes.k = { voice = "Kevin", weight = 5, engine = "neural" }  # Kevin is neural-only (US)
 codes.b = { voice = "Brian", weight = 5 }       # !ttsr, and occasionally random !tts (en-GB)
-codes.g = { voice = "Giorgio", weight = 5 }     #todo add per voice overrides since kevin works only in neutral but giorgio works in standard
+codes.g = { voice = "Giorgio", weight = 5 }
