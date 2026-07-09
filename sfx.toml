@@ -43,9 +43,11 @@ file = "sleep-4.mp3"
 
 [[sounds.sleep.clips]]
 file = "sleep-5.mp3"
+volume = 20
 
 [[sounds.sleep.clips]]
 file = "sleep-6.mp3"
+volume = 20
 
 [sounds.du]
 file = "du-bist-gut-genug_5d9IXZw.mp3"
@@ -90,6 +92,9 @@ file = "dictador.mp3"
 
 [sounds.fu]
 file = "f-me.mp3"
+
+[sounds.music]
+file = "sweet-music.mp3"
 
 # Example of one command with several clips (a random one plays per use):
 # [[sounds.airhorn.clips]]
