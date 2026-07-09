@@ -130,7 +130,7 @@ Shipped in two commits.
   (mod-only, guarded against shadowing built-ins), custom dispatch with variable substitution
   (`$user`/`$args`/`$1..$9`/`$touser`/`$count`/`$random`), per-command **global** cooldowns (mods
   exempt) and `min_role` gating. Slots into `router.go` after the built-ins (which win). A fresh DB
-  is seeded with starter commands (ttshelp/discord/socials/schedule).
+  is seeded with starter commands (ttshelp/socials/schedule).
 - **Dynamic built-ins:** `!commands` (lists stored commands) and `!voices` (via a new **`GET /voices`**
   on the TTS server — `VoiceMap.List()` — keeping the bot decoupled from `voices.toml`).
 - **Timers** (`bot/timers.go`): `timers.toml` `[[timer]]` (name/message/interval/min_lines); each posts

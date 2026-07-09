@@ -98,7 +98,6 @@ func seedCommands(db *store.Store, logger *log.Logger) {
 	}
 	for _, c := range []store.Command{
 		{Name: "ttshelp", Response: "Type !tts <message> and I'll read it. Pick a voice with a code like !ttsk — see !voices."},
-		{Name: "discord", Response: "Discord: (set me with !editcom !discord <link>)"},
 		{Name: "socials", Response: "Socials: (set me with !editcom !socials <links>)"},
 		{Name: "schedule", Response: "Schedule: (set me with !editcom !schedule <text>)"},
 	} {
