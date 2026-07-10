@@ -49,9 +49,14 @@ volume = 20
 file = "sleep-6.mp3"
 volume = 20
 
-[sounds.du]
-file = "du-bist-gut-genug_5d9IXZw.mp3"
-url = "https://www.myinstants.com/media/sounds/du-bist-gut-genug_5d9IXZw.mp3"
+[[sounds.du.clips]]
+file = "du-1.mp3"
+
+[[sounds.du.clips]]
+file = "du-2.mp3"
+
+[[sounds.du.clips]]
+file = "du-3.mp3"
 
 [sounds.fail]
 file = "spongebob-fail.mp3"
@@ -95,6 +100,61 @@ file = "f-me.mp3"
 
 [sounds.music]
 file = "sweet-music.mp3"
+
+[sounds.pos]
+file = "pos.mp3"
+url = "https://www.myinstants.com/media/sounds/joe-pesci-wtf-is-this-piece-of-sht.mp3"
+
+[sounds.human]
+file = "human.mp3"
+
+[sounds.peace]
+file = "a-moments-peace-dark-souls.mp3"
+
+[sounds.ahh]
+file = "ahhhhhh_Bmioga2.mp3"
+
+[sounds.ashen]
+file = "ashen-one-hearest-thou-my-voice-still_2tOKys6.mp3"
+
+[sounds.home]
+file = "bonfire-lit-silent.mp3"
+
+[sounds.boss]
+file = "dark-souls-boss.mp3"
+
+[sounds.died]
+file = "dark-souls-you-died-sound-effect_hm5sYFG.mp3"
+
+[sounds.bell]
+file = "ominous-bell.mp3"
+
+[sounds.plin]
+file = "plin-plin-plon.mp3"
+
+[sounds.good]
+file = "very-good_1.mp3"
+
+[sounds.pain]
+file = "voice-mx-damage-m-1.mp3"
+
+[sounds.yes]
+file = "yes-indeed_IBLkZGY.mp3"
+
+[[sounds.thanks.clips]]
+file = "dark-souls-thank-you-item.mp3"
+
+[[sounds.thanks.clips]]
+file = "thank-you-dark-souls.mp3"
+
+[[sounds.thanks.clips]]
+file = "thank-you_Qf5ogzJ.mp3"
+
+[[sounds.hi.clips]]
+file = "dark-souls-3-hello-carving_cutted.mp3"
+
+[[sounds.hi.clips]]
+file = "hello-there.mp3"
 
 # Example of one command with several clips (a random one plays per use):
 # [[sounds.airhorn.clips]]
