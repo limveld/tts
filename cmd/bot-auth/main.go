@@ -21,8 +21,17 @@ import (
 	"tts/twitch"
 )
 
-// Scopes needed to send chat messages as the authorized user.
-var scopes = []string{"user:write:chat", "user:bot"}
+// Scopes the bot needs. Chat send (user:write:chat, user:bot) plus the marks
+// economy: Get Chatters for watch-time accrual (moderator:read:chatters) and
+// Channel-Point→marks conversion (channel:read:redemptions, channel:manage:redemptions).
+// The last three require authorizing as the broadcaster of the channel.
+var scopes = []string{
+	"user:write:chat",
+	"user:bot",
+	"moderator:read:chatters",
+	"channel:read:redemptions",
+	"channel:manage:redemptions",
+}
 
 func main() {
 	redirect := flag.String("redirect", "http://localhost:3000", "OAuth redirect URL (must match the Twitch app exactly)")

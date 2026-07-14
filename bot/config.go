@@ -30,6 +30,9 @@ type Config struct {
 
 	DBPath string        // SQLite database for custom commands (Stage 2+)
 	Timers []TimerConfig // interval announcements
+
+	Economy        EconomyConfig // marks economy settings (points.toml)
+	EconomyEnabled bool          // points.toml present → charge tts/sfx + run accrual/conversion
 }
 
 // LoadConfig parses flags/env and an optional JSON config file (blocklist).
@@ -58,6 +61,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&c.DBPath, "db", "bot.db", "SQLite database for custom commands")
 	var timersPath string
 	fs.StringVar(&timersPath, "timers-config", "timers.toml", "timers TOML ([[timer]] announcements); optional")
+	var pointsPath string
+	fs.StringVar(&pointsPath, "points-config", "points.toml", "marks economy TOML (accrual/costs/reward); optional")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -102,6 +107,14 @@ func LoadConfig(args []string) (Config, error) {
 		return c, fmt.Errorf("timers config: %w", err)
 	}
 	c.Timers = timers
+
+	// Marks economy: opt-in via points.toml (missing file = economy disabled,
+	// tts/sfx stay free).
+	econ, enabled, err := LoadEconomyConfig(pointsPath)
+	if err != nil {
+		return c, fmt.Errorf("points config: %w", err)
+	}
+	c.Economy, c.EconomyEnabled = econ, enabled
 
 	// Chat is matched lowercased, so normalize command words.
 	c.Cmds.TTSPrefix = strings.ToLower(c.Cmds.TTSPrefix)

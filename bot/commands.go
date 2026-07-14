@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +28,16 @@ func (r *Router) handleCommands(cmd, rest string, m ChatMessage) bool {
 	case "!voices":
 		r.listVoices(m)
 		return true
+	case "!marks", "!m":
+		if r.economy {
+			r.showMarks(rest, m)
+			return true
+		}
+	case "!leaderboard":
+		if r.economy {
+			r.showLeaderboard(m)
+			return true
+		}
 	}
 
 	// Custom command: exact match on the stored name (without the leading "!").
@@ -189,10 +201,95 @@ func (r *Router) isBuiltin(cmd string) bool {
 		"!addcom", "!editcom", "!delcom", "!commands", "!voices":
 		return true
 	}
+	if r.economy && (cmd == "!marks" || cmd == "!m" || cmd == "!leaderboard") {
+		return true
+	}
 	if _, ok := r.sfx[cmd]; ok {
 		return true
 	}
 	return strings.HasPrefix(cmd, r.cmds.TTSPrefix)
+}
+
+// showMarks replies with a user's mark balance: bare !marks/!m for the caller,
+// or "!marks @name" for someone we've seen.
+func (r *Router) showMarks(rest string, m ChatMessage) {
+	if !(m.IsMod || m.IsBroadcaster) && !r.cooldown.Allow(m.User) {
+		return
+	}
+	login := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(rest), "@"))
+	if login != "" && login != strings.ToLower(m.User) {
+		id, ok, err := r.store.ResolveLogin(login)
+		if err != nil {
+			r.logger.Printf("marks resolve %q: %v", login, err)
+			return
+		}
+		if !ok {
+			r.reply(m, "haven't seen @"+login+" yet.")
+			return
+		}
+		bal, err := r.store.Balance(id)
+		if err != nil {
+			r.logger.Printf("marks balance %q: %v", login, err)
+			return
+		}
+		r.reply(m, fmt.Sprintf("@%s has %s %s.", login, comma(bal), r.econ.CurrencyName))
+		return
+	}
+	bal, err := r.store.Balance(m.UserID)
+	if err != nil {
+		r.logger.Printf("marks balance %s: %v", m.User, err)
+		return
+	}
+	r.reply(m, fmt.Sprintf("@%s you have %s %s.", displayName(m), comma(bal), r.econ.CurrencyName))
+}
+
+// showLeaderboard replies with the top mark holders.
+func (r *Router) showLeaderboard(m ChatMessage) {
+	if !(m.IsMod || m.IsBroadcaster) && !r.cooldown.Allow(m.User) {
+		return
+	}
+	lb, err := r.store.Leaderboard(10)
+	if err != nil {
+		r.logger.Printf("leaderboard: %v", err)
+		return
+	}
+	if len(lb) == 0 {
+		r.reply(m, "No "+r.econ.CurrencyName+" yet.")
+		return
+	}
+	parts := make([]string, len(lb))
+	for i, e := range lb {
+		parts[i] = fmt.Sprintf("%d. %s %s", i+1, e.Display, comma(e.Balance))
+	}
+	r.reply(m, "Top "+r.econ.CurrencyName+": "+strings.Join(parts, "  "))
+}
+
+// displayName returns the best available name for m (display tag, else login).
+func displayName(m ChatMessage) string {
+	if m.Display != "" {
+		return m.Display
+	}
+	return m.User
+}
+
+// comma formats n with thousands separators (e.g. 1024 -> "1,024").
+func comma(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	neg := strings.HasPrefix(s, "-")
+	if neg {
+		s = s[1:]
+	}
+	var b strings.Builder
+	for i, d := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(d)
+	}
+	if neg {
+		return "-" + b.String()
+	}
+	return b.String()
 }
 
 // commandCooldownAllow enforces a per-command global cooldown (shared across

@@ -34,6 +34,7 @@ func main() {
 	seedCommands(db, logger)
 
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	chat, client, tok := buildChat(cfg, logger)
 	router := &Router{
 		cmds:     cfg.Cmds,
 		minRole:  cfg.MinRole,
@@ -43,7 +44,7 @@ func main() {
 			return Clean(text, cfg.Blocklist, cfg.MaxChars)
 		},
 		tts:    NewTTSClient(cfg.TTSURL, cfg.TTSToken),
-		chat:   buildChat(cfg, logger),
+		chat:   chat,
 		store:  db,
 		rnd:    rnd,
 		logger: logger,
@@ -64,15 +65,39 @@ func main() {
 		}
 		router.Handle(m)
 	}
+	roomIDOf := func() string {
+		if p := roomID.Load(); p != nil {
+			return *p
+		}
+		return ""
+	}
+
+	// Marks economy: needs points.toml plus a broadcaster token carrying the
+	// accrual/conversion scopes. When present, charge tts/sfx and run the earning
+	// loops; otherwise the bot runs with tts/sfx free (today's behavior).
+	if cfg.EconomyEnabled && client != nil && hasEconomyScopes(tok) {
+		router.economy = true
+		router.econ = cfg.Economy
+		// Broadcaster id: prefer the room-id we read from chat; fall back to the
+		// token owner's id (correct under broadcaster auth) so accrual works even
+		// before the first chat line.
+		broadcasterID := func() string {
+			if id := roomIDOf(); id != "" {
+				return id
+			}
+			return client.SenderID()
+		}
+		econ := NewEconomy(db, client, cfg.Economy, broadcasterID, logger)
+		go econ.Run(ctx)
+		logger.Printf("economy enabled: currency=%s tts=%d sfx=%d accrual=%s/%d",
+			cfg.Economy.CurrencyName, cfg.Economy.TTSCost, cfg.Economy.SFXCost,
+			cfg.Economy.AccrualInterval, cfg.Economy.AccrualRate)
+	} else if cfg.EconomyEnabled {
+		logger.Printf("economy configured but disabled: authorize as broadcaster with marks scopes (run 'mise run bot:auth'); !tts/!sfx are free")
+	}
 
 	if router.chat != nil && len(cfg.Timers) > 0 {
-		timers := NewTimers(cfg.Timers, router.chat, lineCount.Load,
-			func() string {
-				if p := roomID.Load(); p != nil {
-					return *p
-				}
-				return ""
-			}, logger)
+		timers := NewTimers(cfg.Timers, router.chat, lineCount.Load, roomIDOf, logger)
 		go timers.Run(ctx)
 		logger.Printf("timers: %d configured", len(cfg.Timers))
 	}
@@ -108,25 +133,53 @@ func seedCommands(db *store.Store, logger *log.Logger) {
 	logger.Printf("seeded starter commands (edit with !editcom)")
 }
 
-// buildChat returns a Chat sender when Twitch credentials and a saved token are
-// both present; otherwise nil, so the bot still runs read-only (replies just
-// no-op with a log line until `mise run bot:auth` is done).
-func buildChat(cfg Config, logger *log.Logger) Chat {
+// buildChat returns a Chat sender plus the underlying client and token when
+// Twitch credentials and a saved token are both present; otherwise all nil, so
+// the bot still runs read-only (replies no-op with a log line until
+// `mise run bot:auth` is done). The client + token are also what the marks
+// economy needs (Get Chatters / channel points), so they're returned too.
+func buildChat(cfg Config, logger *log.Logger) (Chat, *twitch.Client, *twitch.Token) {
 	if cfg.TwitchClientID == "" || cfg.TwitchSecret == "" {
-		return nil
+		return nil, nil, nil
 	}
 	tokStore := twitch.NewStore(cfg.TokenStore)
 	tok, err := tokStore.Load()
 	if err != nil {
 		logger.Printf("twitch: token store: %v", err)
-		return nil
+		return nil, nil, nil
 	}
 	if tok == nil {
 		logger.Printf("twitch: no saved token — run 'mise run bot:auth' to enable chat replies")
-		return nil
+		return nil, nil, nil
 	}
 	client := twitch.NewClient(cfg.TwitchClientID, cfg.TwitchSecret, tokStore)
 	client.SetToken(tok)
 	logger.Printf("twitch: chat replies enabled as %s", tok.Login)
-	return NewChatSender(client)
+	return NewChatSender(client), client, tok
+}
+
+// economyScopes are the token scopes the marks economy needs beyond chat send:
+// watch-time accrual (Get Chatters) and channel-point conversion.
+var economyScopes = []string{
+	"moderator:read:chatters",
+	"channel:read:redemptions",
+	"channel:manage:redemptions",
+}
+
+// hasEconomyScopes reports whether tok carries all economyScopes (so the bot was
+// authorized as the broadcaster with the marks scopes).
+func hasEconomyScopes(tok *twitch.Token) bool {
+	if tok == nil {
+		return false
+	}
+	have := make(map[string]bool, len(tok.Scope))
+	for _, s := range tok.Scope {
+		have[s] = true
+	}
+	for _, need := range economyScopes {
+		if !have[need] {
+			return false
+		}
+	}
+	return true
 }

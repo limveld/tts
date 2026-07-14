@@ -1,6 +1,6 @@
 # Native Go bot: make it reply-capable + replace StreamElements
 
-Status: in progress — Stage 2 (custom commands + timers) done
+Status: in progress — Stage 3 sub-step A (marks economy core) done
 Type: task
 Created: 2026-07-03
 
@@ -145,3 +145,38 @@ per-command cooldowns are global. `go build/vet/test ./...` clean (store + subst
 timer-gate tests); `GET /voices` and the seed/startup path smoke-verified. Live chat needs the user's
 Twitch auth. **Next:** Stage 3 — loyalty points (watch-time accrual, `!points`/`!gamble`/`!redeem`/
 `!give`/`!leaderboard`) on this same store.
+
+### 2026-07-14 — Stage 3 sub-step A (marks economy core) implemented
+
+Grilling reshaped Stage 3 from the original sketch. The currency is **"marks"**; there is **no manual
+`!redeem`** — instead **marks are spent implicitly by `!tts`/`!sfx`** and **earned two ways**: our own
+**watch-time accrual** (live-only) *and* viewers **converting Twitch Channel Points**. Auth moves to a
+**single broadcaster token** (Channel Points need it). Still **no WebSocket** — all Twitch reads poll.
+
+- **Store** (`store/points.go`): an append-only **`ledger(user_id, delta, reason, ref, ts)`** (balance =
+  `SUM(delta)`) + a **`users(user_id, login, display, last_seen)`** identity table. Methods: `Balance`,
+  `Spend`/`Transfer` (atomic `BEGIN IMMEDIATE`, can't overdraw), `Credit` (idempotent on `ref` — a unique
+  index makes channel-point crediting crash-safe), `UpsertUser`, `ResolveLogin`, `Leaderboard`. Same
+  `bot.db` as Stage 2.
+- **Twitch client** (`twitch/api.go`): `GetChatters`, `IsLive` (Get Streams — also unblocks `$uptime`),
+  and channel-point `EnsureReward`/`GetRedemptions`/`FulfillRedemptions`. Refactored `helix.go` to share
+  one `do` (401→refresh→retry) wrapper across send + the new GET/PATCH calls.
+- **Economy runner** (`bot/economy.go`): one goroutine, two loops — **accrual** (every `accrual_interval`,
+  if live, credit each present viewer `accrual_rate`) and **conversion** (poll the bot-managed "Convert to
+  Marks" reward every `poll_interval`; credit `reward_grant`, mark FULFILLED). Any scope/affiliate failure
+  logs once and disables that loop; the bot keeps running.
+- **Charging** (`bot/router.go`): `!tts`/`!sfx` check affordability → run the effect → **debit on success**
+  (failed effect = no charge). **Everyone pays** (mods/broadcaster included); the per-user cooldown stays.
+  Broke → a polite refusal. **Read commands** (`bot/commands.go`): `!marks`/`!m [@user]` + `!leaderboard`.
+- **Config/wiring**: opt-in **`points.toml`** (`currency_name`, accrual, costs, reward, poll; + game knobs
+  for B). `cmd/bot-auth` gains `moderator:read:chatters`, `channel:read:redemptions`,
+  `channel:manage:redemptions` — **user must re-run `mise run bot:auth` as the broadcaster**. **Safety
+  valve:** if the token lacks those scopes (or points.toml is absent), the economy stays **disabled** and
+  `!tts`/`!sfx` remain **free** — the bot never becomes unusable.
+
+`go build/vet/test ./...` clean (store ledger/idempotency/leaderboard, twitch httptest suite, economy
+accrual/conversion/disable, charge path + read commands, config defaults). Smoke-verified: bot boots,
+creates the ledger/users tables, and correctly logs "economy configured but disabled" for the existing
+token (which predates the new scopes). Live accrual/conversion needs the broadcaster re-auth + an
+affiliate channel. **Next:** Stage 3 sub-step B — `!gamble` (coinflip) + `!give` on this same store
+(`store.Transfer` already in place).

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"sort"
@@ -29,10 +30,13 @@ type Router struct {
 	cooldown *Cooldown
 	sanitize func(text string) (string, bool) // wraps Clean with blocklist+maxChars
 	tts      TTS
-	chat     Chat          // may be nil when the bot isn't authenticated (replies disabled)
-	store    *store.Store  // custom commands (may be nil → command engine disabled)
-	rnd      *rand.Rand    // for $random substitution
+	chat     Chat         // may be nil when the bot isn't authenticated (replies disabled)
+	store    *store.Store // custom commands + marks economy (may be nil → both disabled)
+	rnd      *rand.Rand   // for $random substitution
 	logger   *log.Logger
+
+	economy bool          // marks economy active: charge !tts/!sfx, enable !marks/!leaderboard
+	econ    EconomyConfig // currency name + per-command costs
 
 	cdMu        sync.Mutex           // guards cmdCooldown
 	cmdCooldown map[string]time.Time // per-command global cooldown
@@ -77,11 +81,15 @@ func (r *Router) Handle(m ChatMessage) {
 			r.logger.Printf("cooldown: ignoring %s", m.User)
 			return
 		}
+		if !r.canAfford(m, r.econ.SFXCost) {
+			return
+		}
 		name := strings.TrimPrefix(cmd, "!")
 		if err := r.tts.SFX(name); err != nil {
 			r.logger.Printf("sfx error: %v", err)
 			return
 		}
+		r.chargeAfter(m, r.econ.SFXCost, "sfx")
 		r.logger.Printf("sfx %q for %s", name, m.User)
 		return
 	}
@@ -112,11 +120,53 @@ func (r *Router) Handle(m ChatMessage) {
 		r.logger.Printf("dropped (empty/blocked) from %s", m.User)
 		return
 	}
+	if !r.canAfford(m, r.econ.TTSCost) {
+		return
+	}
 	if err := r.tts.Say(clean, code); err != nil {
 		r.logger.Printf("say error: %v", err)
 		return
 	}
+	r.chargeAfter(m, r.econ.TTSCost, "tts")
 	r.logger.Printf("spoke [%s] for %s: %q", code, m.User, clean)
+}
+
+// economyActive reports whether a marks cost should be applied for this action.
+func (r *Router) economyActive(cost int64) bool {
+	return r.economy && r.store != nil && cost > 0
+}
+
+// canAfford checks (without charging) that m's user can pay cost marks, and
+// sends a polite refusal if not. It returns true when the caller may proceed
+// (economy off, zero cost, or affordable). A concurrent credit can only raise
+// the balance, so the later chargeAfter never fails after this passes.
+func (r *Router) canAfford(m ChatMessage, cost int64) bool {
+	if !r.economyActive(cost) {
+		return true
+	}
+	bal, err := r.store.Balance(m.UserID)
+	if err != nil {
+		r.logger.Printf("balance %s: %v", m.User, err)
+		return false // fail closed — don't grant free use on a DB error
+	}
+	if bal < cost {
+		r.reply(m, fmt.Sprintf("@%s you need %d %s (you have %d).", displayName(m), cost, r.econ.CurrencyName, bal))
+		return false
+	}
+	return true
+}
+
+// chargeAfter debits cost marks once the effect succeeded (a failed effect never
+// reaches here, so there's nothing to refund).
+func (r *Router) chargeAfter(m ChatMessage, cost int64, reason string) {
+	if !r.economyActive(cost) {
+		return
+	}
+	if ok, err := r.store.Spend(m.UserID, cost, reason); err != nil {
+		r.logger.Printf("charge %s: %v", m.User, err)
+	} else if !ok {
+		r.logger.Printf("charge %s: insufficient at debit", m.User)
+	}
 }
 
 func (r *Router) eligible(m ChatMessage) bool { return r.roleAllows(r.minRole, m) }

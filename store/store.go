@@ -40,15 +40,39 @@ func Open(path string) (*Store, error) {
 			return nil, err
 		}
 	}
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS commands (
-		name     TEXT PRIMARY KEY,
-		response TEXT NOT NULL,
-		cooldown INTEGER NOT NULL DEFAULT 0,
-		min_role TEXT NOT NULL DEFAULT 'everyone',
-		count    INTEGER NOT NULL DEFAULT 0
-	)`); err != nil {
-		db.Close()
-		return nil, err
+	schema := []string{
+		`CREATE TABLE IF NOT EXISTS commands (
+			name     TEXT PRIMARY KEY,
+			response TEXT NOT NULL,
+			cooldown INTEGER NOT NULL DEFAULT 0,
+			min_role TEXT NOT NULL DEFAULT 'everyone',
+			count    INTEGER NOT NULL DEFAULT 0
+		)`,
+		// Stage 3 loyalty-points ("marks") economy: an identity table and an
+		// append-only ledger (balance = SUM(delta)). See store/points.go.
+		`CREATE TABLE IF NOT EXISTS users (
+			user_id   TEXT PRIMARY KEY,
+			login     TEXT NOT NULL,
+			display   TEXT NOT NULL,
+			last_seen INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS ledger (
+			id      INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id TEXT NOT NULL,
+			delta   INTEGER NOT NULL,
+			reason  TEXT NOT NULL,
+			ref     TEXT,
+			ts      INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS ledger_user ON ledger(user_id)`,
+		// Idempotent channel-point crediting: a redemption id credits at most once.
+		`CREATE UNIQUE INDEX IF NOT EXISTS ledger_ref ON ledger(ref) WHERE ref IS NOT NULL`,
+	}
+	for _, stmt := range schema {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	return &Store{db: db}, nil
 }

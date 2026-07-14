@@ -13,20 +13,9 @@ import (
 // user. A non-empty replyParentID threads it as a reply to that message. On a 401
 // it refreshes the token once (persisting the new one) and retries.
 func (c *Client) SendChatMessage(ctx context.Context, broadcasterID, message, replyParentID string) error {
-	return c.send(ctx, broadcasterID, message, replyParentID, true)
-}
-
-func (c *Client) send(ctx context.Context, broadcasterID, message, replyParentID string, allowRefresh bool) error {
-	c.mu.Lock()
-	tok := c.token
-	c.mu.Unlock()
-	if tok == nil {
-		return fmt.Errorf("no token; run bot-auth")
-	}
-
 	payload := map[string]string{
 		"broadcaster_id": broadcasterID,
-		"sender_id":      tok.UserID,
+		"sender_id":      c.SenderID(),
 		"message":        message,
 	}
 	if replyParentID != "" {
@@ -34,26 +23,11 @@ func (c *Client) send(ctx context.Context, broadcasterID, message, replyParentID
 	}
 	body, _ := json.Marshal(payload)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.helixBase+"/chat/messages", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
-	req.Header.Set("Client-Id", c.clientID)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.http.Do(req)
+	resp, err := c.do(ctx, http.MethodPost, c.helixBase+"/chat/messages", body)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized && allowRefresh {
-		if err := c.doRefresh(ctx); err != nil {
-			return fmt.Errorf("refresh after 401: %w", err)
-		}
-		return c.send(ctx, broadcasterID, message, replyParentID, false)
-	}
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return fmt.Errorf("send chat message: %s: %s", resp.Status, bytes.TrimSpace(b))
@@ -76,6 +50,48 @@ func (c *Client) send(ctx context.Context, broadcasterID, message, replyParentID
 		return fmt.Errorf("message not sent")
 	}
 	return nil
+}
+
+// do performs an authenticated Helix request, refreshing the token once on a 401
+// and retrying. The caller owns resp.Body and must close it. body may be nil.
+func (c *Client) do(ctx context.Context, method, url string, body []byte) (*http.Response, error) {
+	return c.doRetry(ctx, method, url, body, true)
+}
+
+func (c *Client) doRetry(ctx context.Context, method, url string, body []byte, allowRefresh bool) (*http.Response, error) {
+	c.mu.Lock()
+	tok := c.token
+	c.mu.Unlock()
+	if tok == nil {
+		return nil, fmt.Errorf("no token; run bot-auth")
+	}
+
+	var rdr io.Reader
+	if body != nil {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, rdr)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+	req.Header.Set("Client-Id", c.clientID)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized && allowRefresh {
+		resp.Body.Close()
+		if err := c.doRefresh(ctx); err != nil {
+			return nil, fmt.Errorf("refresh after 401: %w", err)
+		}
+		return c.doRetry(ctx, method, url, body, false)
+	}
+	return resp, nil
 }
 
 // doRefresh swaps the current token for a refreshed one and persists it.

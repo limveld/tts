@@ -1,0 +1,39 @@
+# Marks economy: viewers earn "marks" and spend them on !tts / !sfx.
+#
+# Marks are earned two ways:
+#   1. Watch-time accrual — every `accrual_interval` while the stream is LIVE,
+#      each present viewer is credited `accrual_rate` marks.
+#   2. Channel-Point conversion — the bot creates a custom channel-point reward
+#      (`reward_title`, costing `reward_cost` points) that grants `reward_grant`
+#      marks each time it's redeemed.
+#
+# Marks are spent by using !tts (`tts_cost`) and !sfx (`sfx_cost`); everyone pays
+# (mods and broadcaster included). Check a balance with !marks / !m; see the top
+# holders with !leaderboard.
+#
+# This file being present ENABLES the economy. It also requires authorizing as
+# the broadcaster with the marks scopes — run `mise run bot:auth` (re-consent
+# after adding the scopes). Without that, tts/sfx stay free.
+#
+# After editing: `mise run reload`.
+
+currency_name = "marks"
+
+# Watch-time accrual (live only).
+accrual_interval = "1m"   # Go duration: 30s, 1m, 5m
+accrual_rate     = 1      # marks per interval per present viewer
+
+# Spend costs.
+tts_cost = 1
+sfx_cost = 1
+
+# Channel-Point → marks conversion reward (the bot creates/manages it).
+reward_title  = "Convert to Marks"
+reward_cost   = 1000                       # channel points per redemption
+reward_grant  = 500                        # marks granted per redemption
+reward_prompt = "Convert channel points into marks for !tts and !sfx."
+poll_interval = "30s"                      # how often to check for redemptions
+
+# Games (sub-step B — !gamble / !give).
+gamble_win_chance = 0.47   # <0.5 gives the house an edge
+gamble_min_bet    = 10
