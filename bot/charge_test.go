@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math/rand"
 	"path/filepath"
 	"testing"
 
@@ -22,7 +23,11 @@ func econRouter(t *testing.T) (*Router, *fakeTTS, *store.Store, *fakeChat) {
 	r.store = st
 	r.chat = chat
 	r.economy = true
-	r.econ = EconomyConfig{CurrencyName: "marks", TTSCost: 10, SFXCost: 5}
+	r.rnd = rand.New(rand.NewSource(1))
+	r.econ = EconomyConfig{
+		CurrencyName: "marks", TTSCost: 10, SFXCost: 5,
+		GambleMinBet: 10, GambleWinChance: 0.47,
+	}
 	return r, f, st, chat
 }
 

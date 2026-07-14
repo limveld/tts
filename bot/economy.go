@@ -78,8 +78,8 @@ func LoadEconomyConfig(path string) (cfg EconomyConfig, enabled bool, err error)
 		RewardGrant:     doc.RewardGrant,
 		RewardPrompt:    doc.RewardPrompt,
 		PollInterval:    poll,
-		GambleWinChance: doc.GambleWinChance,
-		GambleMinBet:    doc.GambleMinBet,
+		GambleWinChance: orFloat(doc.GambleWinChance, 0.47),
+		GambleMinBet:    orInt64(doc.GambleMinBet, 10),
 	}
 	return cfg, true, nil
 }
@@ -107,6 +107,13 @@ func orInt64(n, def int64) int64 {
 		return def
 	}
 	return n
+}
+
+func orFloat(f, def float64) float64 {
+	if f == 0 {
+		return def
+	}
+	return f
 }
 
 // TwitchAPI is the slice of the Twitch client the economy runner needs (an

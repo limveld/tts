@@ -38,6 +38,16 @@ func (r *Router) handleCommands(cmd, rest string, m ChatMessage) bool {
 			r.showLeaderboard(m)
 			return true
 		}
+	case "!gamble":
+		if r.economy {
+			r.gamble(rest, m)
+			return true
+		}
+	case "!give":
+		if r.economy {
+			r.give(rest, m)
+			return true
+		}
 	}
 
 	// Custom command: exact match on the stored name (without the leading "!").
@@ -201,8 +211,11 @@ func (r *Router) isBuiltin(cmd string) bool {
 		"!addcom", "!editcom", "!delcom", "!commands", "!voices":
 		return true
 	}
-	if r.economy && (cmd == "!marks" || cmd == "!m" || cmd == "!leaderboard") {
-		return true
+	if r.economy {
+		switch cmd {
+		case "!marks", "!m", "!leaderboard", "!gamble", "!give":
+			return true
+		}
 	}
 	if _, ok := r.sfx[cmd]; ok {
 		return true

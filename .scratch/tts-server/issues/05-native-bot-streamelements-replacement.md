@@ -1,6 +1,6 @@
 # Native Go bot: make it reply-capable + replace StreamElements
 
-Status: in progress — Stage 3 sub-step A (marks economy core) done
+Status: in progress — Stage 3 (marks economy incl. gamble/give) done; retire-SE (Stage 4) remains
 Type: task
 Created: 2026-07-03
 
@@ -180,3 +180,19 @@ creates the ledger/users tables, and correctly logs "economy configured but disa
 token (which predates the new scopes). Live accrual/conversion needs the broadcaster re-auth + an
 affiliate channel. **Next:** Stage 3 sub-step B — `!gamble` (coinflip) + `!give` on this same store
 (`store.Transfer` already in place).
+
+### 2026-07-14 — Stage 3 sub-step B (gamble + give) implemented
+
+- **`bot/games.go`**: `!gamble <amount|all>` — a coinflip double-or-nothing at `gamble_win_chance`
+  (default 0.47, house edge), with a `gamble_min_bet` floor (default 10) and `all` support; win nets
+  `+bet`, loss forfeits it, reply shows the outcome + new balance. `!give @user <amount>` — resolves the
+  recipient in the `users` table (else "haven't seen"), blocks self-gives, and moves marks via the atomic
+  `store.Transfer` (can't overdraw). Both are economy built-ins (dispatched only when the economy is
+  enabled, guarded against `!addcom` shadowing) and share the standard per-user cooldown (mods exempt).
+- Config gained `gamble_win_chance` / `gamble_min_bet` defaults in `LoadEconomyConfig`.
+
+`go build/vet/test ./...` clean (gamble win/lose/all/min-bet/over-balance; give transfer/self-block/
+unseen/over-balance; games inert when the economy is off). This completes the SE **chatbot-layer**
+replacement (commands + timers + points). **Remaining:** Stage 4 — actually retire the SE custom
+commands/points once this has run live for a bit (overlays/alerts stay on SE, out of scope). Deferred
+niceties: chat-managed `!addtimer` (+ timers table), `$uptime` (now trivial via `IsLive`), reward tiers.
