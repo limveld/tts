@@ -70,6 +70,38 @@ func (s *Store) Credit(userID string, amount int64, reason, ref string) (credite
 	return n > 0, nil
 }
 
+// Grant is an admin mint/claw-back (for !grant): a positive delta adds marks
+// unconditionally; a negative delta removes marks but clamps at 0 (never a
+// negative balance). It runs in one immediate transaction and returns the
+// resulting balance. The ledger records the actually-applied delta.
+func (s *Store) Grant(userID string, delta int64, reason string) (newBal int64, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	var bal int64
+	if err := tx.QueryRow(`SELECT COALESCE(SUM(delta), 0) FROM ledger WHERE user_id = ?`, userID).Scan(&bal); err != nil {
+		return 0, err
+	}
+	applied := delta
+	if delta < 0 && -delta > bal {
+		applied = -bal // clamp the removal to what they have
+	}
+	if applied != 0 {
+		if _, err := tx.Exec(
+			`INSERT INTO ledger (user_id, delta, reason, ts) VALUES (?, ?, ?, ?)`,
+			userID, applied, reason, time.Now().Unix()); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return bal + applied, nil
+}
+
 // Spend deducts amount marks from userID if they can afford it, atomically
 // (the balance check and the debit run in one immediate transaction so a
 // concurrent credit can't be lost and the balance can't go negative). ok is

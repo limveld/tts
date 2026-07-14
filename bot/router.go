@@ -35,8 +35,10 @@ type Router struct {
 	rnd      *rand.Rand   // for $random substitution
 	logger   *log.Logger
 
-	economy bool          // marks economy active: charge !tts/!sfx, enable !marks/!leaderboard
-	econ    EconomyConfig // currency name + per-command costs
+	economy  bool          // marks economy active: enable !marks/!leaderboard/!grant/…
+	econ     EconomyConfig // currency name + per-command costs
+	charging bool          // paid mode: !tts/!sfx deduct marks (false = free mode)
+	resolver UserResolver  // resolves unseen logins for !grant (nil when no Twitch client)
 
 	cdMu        sync.Mutex           // guards cmdCooldown
 	cmdCooldown map[string]time.Time // per-command global cooldown
@@ -132,8 +134,9 @@ func (r *Router) Handle(m ChatMessage) {
 }
 
 // economyActive reports whether a marks cost should be applied for this action.
+// Free mode (r.charging == false) waives the cost even when the economy is on.
 func (r *Router) economyActive(cost int64) bool {
-	return r.economy && r.store != nil && cost > 0
+	return r.economy && r.charging && r.store != nil && cost > 0
 }
 
 // canAfford checks (without charging) that m's user can pay cost marks, and

@@ -91,6 +91,47 @@ func TestUsersAndLeaderboard(t *testing.T) {
 	}
 }
 
+func TestGrantMintAndClamp(t *testing.T) {
+	s := openTemp(t)
+
+	// Mint.
+	if bal, err := s.Grant("u1", 500, "grant"); err != nil || bal != 500 {
+		t.Fatalf("Grant +500: bal=%d err=%v", bal, err)
+	}
+	// Partial removal.
+	if bal, err := s.Grant("u1", -200, "grant"); err != nil || bal != 300 {
+		t.Fatalf("Grant -200: bal=%d err=%v want 300", bal, err)
+	}
+	// Over-removal clamps to 0 (not negative).
+	if bal, err := s.Grant("u1", -100000, "grant"); err != nil || bal != 0 {
+		t.Fatalf("Grant -100000: bal=%d err=%v want 0", bal, err)
+	}
+	if b, _ := s.Balance("u1"); b != 0 {
+		t.Fatalf("balance=%d want 0 (never negative)", b)
+	}
+}
+
+func TestSettings(t *testing.T) {
+	s := openTemp(t)
+
+	if _, ok, err := s.GetSetting("charge_mode"); err != nil || ok {
+		t.Fatalf("absent setting: ok=%v err=%v want false/nil", ok, err)
+	}
+	if err := s.SetSetting("charge_mode", "free"); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok, err := s.GetSetting("charge_mode"); err != nil || !ok || v != "free" {
+		t.Fatalf("get: v=%q ok=%v err=%v", v, ok, err)
+	}
+	// Overwrite.
+	if err := s.SetSetting("charge_mode", "paid"); err != nil {
+		t.Fatal(err)
+	}
+	if v, _, _ := s.GetSetting("charge_mode"); v != "paid" {
+		t.Fatalf("after overwrite v=%q want paid", v)
+	}
+}
+
 func TestTransfer(t *testing.T) {
 	s := openTemp(t)
 	s.Credit("giver", 100, "accrual", "")

@@ -23,6 +23,7 @@ func econRouter(t *testing.T) (*Router, *fakeTTS, *store.Store, *fakeChat) {
 	r.store = st
 	r.chat = chat
 	r.economy = true
+	r.charging = true // paid mode by default in tests
 	r.rnd = rand.New(rand.NewSource(1))
 	r.econ = EconomyConfig{
 		CurrencyName: "marks", TTSCost: 10, SFXCost: 5,

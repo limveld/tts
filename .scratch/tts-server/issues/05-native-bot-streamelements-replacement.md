@@ -1,6 +1,6 @@
 # Native Go bot: make it reply-capable + replace StreamElements
 
-Status: in progress — Stage 3 (marks economy incl. gamble/give) done; retire-SE (Stage 4) remains
+Status: in progress — Stage 3 done (marks economy + gamble/give + owner grant/free-paid); retire-SE (Stage 4) remains
 Type: task
 Created: 2026-07-03
 
@@ -196,3 +196,24 @@ unseen/over-balance; games inert when the economy is off). This completes the SE
 replacement (commands + timers + points). **Remaining:** Stage 4 — actually retire the SE custom
 commands/points once this has run live for a bit (overlays/alerts stay on SE, out of scope). Deferred
 niceties: chat-managed `!addtimer` (+ timers table), `$uptime` (now trivial via `IsLive`), reward tiers.
+
+### 2026-07-14 — Stage 3C (owner grant + free/paid toggle) implemented
+
+Two broadcaster-only economy controls requested by the owner.
+
+- **`!grant @user <amount>`** (`bot/admin.go`): mints marks on a positive amount, removes on a negative
+  one **clamped at 0** (never negative), via a new atomic `store.Grant`. Resolves the target
+  **local `users` table first, then Helix `Get Users`** (new `twitch.GetUsers`, no new scope) so it works
+  for anyone; an unknown login replies "no such user". The resolved name is upserted so a freshly-granted
+  user shows on the leaderboard. Independent of the charge mode.
+- **`!free` / `!paid`** (`bot/admin.go`): toggle whether `!tts`/`!sfx` charge — modeled on the
+  `!pause`/`!clear` queue controls. **Persisted** in a new `settings(key,value)` table
+  (`store/settings.go`); restored on startup (default paid). **Free mode waives only `!tts`/`!sfx` cost** —
+  accrual keeps running and `!gamble`/`!give`/`!marks` keep using real marks. Implemented as a `charging`
+  flag on the Router; `economyActive` gained `&& r.charging`. No lock needed (all in the sequential IRC
+  handler).
+
+`go build/vet/test ./...` clean (store Grant mint/clamp + settings round-trip; twitch Get Users;
+grant mint/remove/unseen-resolve/unknown/broadcaster-only; free waives tts but games/accrual still charge;
+persist + broadcaster-only). Smoke-verified: bot boots "economy enabled (paid)" as the broadcaster and
+creates the `settings` table.

@@ -117,6 +117,30 @@ func TestEnsureRewardExistingVsCreate(t *testing.T) {
 	})
 }
 
+func TestGetUsers(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/helix/users", func(w http.ResponseWriter, r *http.Request) {
+		logins := r.URL.Query()["login"]
+		if len(logins) != 1 || logins[0] != "bob" {
+			// Unknown login → empty data.
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]string{}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"id": "u1", "login": "bob", "display_name": "Bob"}},
+		})
+	})
+	c, _ := newTestClient(t, mux)
+
+	got, err := c.GetUsers(context.Background(), "bob")
+	if err != nil || len(got) != 1 || got[0].ID != "u1" || got[0].Display != "Bob" {
+		t.Fatalf("GetUsers bob = %+v err=%v", got, err)
+	}
+	if got, err := c.GetUsers(context.Background(), "ghost"); err != nil || len(got) != 0 {
+		t.Fatalf("GetUsers ghost = %+v err=%v want empty", got, err)
+	}
+}
+
 func TestRedemptionsFetchAndFulfill(t *testing.T) {
 	var fulfilledIDs []string
 	mux := http.NewServeMux()

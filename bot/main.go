@@ -78,6 +78,14 @@ func main() {
 	if cfg.EconomyEnabled && client != nil && hasEconomyScopes(tok) {
 		router.economy = true
 		router.econ = cfg.Economy
+		router.resolver = twitchResolver{client: client}
+		// Charge mode is a persisted runtime toggle (!free/!paid); default paid.
+		router.charging = true
+		if mode, ok, err := db.GetSetting("charge_mode"); err != nil {
+			logger.Printf("charge_mode: %v", err)
+		} else if ok && mode == "free" {
+			router.charging = false
+		}
 		// Broadcaster id: prefer the room-id we read from chat; fall back to the
 		// token owner's id (correct under broadcaster auth) so accrual works even
 		// before the first chat line.
@@ -89,8 +97,12 @@ func main() {
 		}
 		econ := NewEconomy(db, client, cfg.Economy, broadcasterID, logger)
 		go econ.Run(ctx)
-		logger.Printf("economy enabled: currency=%s tts=%d sfx=%d accrual=%s/%d",
-			cfg.Economy.CurrencyName, cfg.Economy.TTSCost, cfg.Economy.SFXCost,
+		mode := "paid"
+		if !router.charging {
+			mode = "free"
+		}
+		logger.Printf("economy enabled (%s): currency=%s tts=%d sfx=%d accrual=%s/%d",
+			mode, cfg.Economy.CurrencyName, cfg.Economy.TTSCost, cfg.Economy.SFXCost,
 			cfg.Economy.AccrualInterval, cfg.Economy.AccrualRate)
 	} else if cfg.EconomyEnabled {
 		logger.Printf("economy configured but disabled: authorize as broadcaster with marks scopes (run 'mise run bot:auth'); !tts/!sfx are free")

@@ -11,6 +11,11 @@
 # (mods and broadcaster included). Check a balance with !marks / !m; see the top
 # holders with !leaderboard.
 #
+# Owner controls (broadcaster only, no config needed): !grant @user <amount>
+# mints marks to anyone (negative removes, floored at 0); !free / !paid toggle
+# whether !tts/!sfx charge at all (persisted across restarts). Free mode only
+# waives tts/sfx cost — accrual and !gamble/!give keep using real marks.
+#
 # This file being present ENABLES the economy. It also requires authorizing as
 # the broadcaster with the marks scopes — run `mise run bot:auth` (re-consent
 # after adding the scopes). Without that, tts/sfx stay free.

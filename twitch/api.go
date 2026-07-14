@@ -31,6 +31,41 @@ type Redemption struct {
 	Display string
 }
 
+// User is one account from Get Users (used to resolve a login the bot hasn't
+// seen in chat yet, for !grant).
+type User struct {
+	ID      string
+	Login   string
+	Display string
+}
+
+// GetUsers resolves the given logins to accounts via Get Users. Unknown logins
+// are simply absent from the result (no error). Needs no special scope.
+func (c *Client) GetUsers(ctx context.Context, logins ...string) ([]User, error) {
+	if len(logins) == 0 {
+		return nil, nil
+	}
+	q := url.Values{}
+	for _, l := range logins {
+		q.Add("login", l)
+	}
+	var out struct {
+		Data []struct {
+			ID          string `json:"id"`
+			Login       string `json:"login"`
+			DisplayName string `json:"display_name"`
+		} `json:"data"`
+	}
+	if err := c.getJSON(ctx, c.helixBase+"/users?"+q.Encode(), &out); err != nil {
+		return nil, err
+	}
+	users := make([]User, len(out.Data))
+	for i, d := range out.Data {
+		users[i] = User{ID: d.ID, Login: d.Login, Display: d.DisplayName}
+	}
+	return users, nil
+}
+
 // getJSON performs an authenticated GET and decodes the body into v.
 func (c *Client) getJSON(ctx context.Context, url string, v any) error {
 	resp, err := c.do(ctx, http.MethodGet, url, nil)
