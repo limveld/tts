@@ -58,9 +58,13 @@ file = "du-2.mp3"
 [[sounds.du.clips]]
 file = "du-3.mp3"
 
-[sounds.fail]
+[[sounds.fail.clips]]
 file = "spongebob-fail.mp3"
 url = "https://www.myinstants.com/media/sounds/spongebob-fail.mp3"
+
+[[sounds.fail.clips]]
+file = "fail.mp3"
+volume = 50
 
 [sounds.tu]
 file = "tuturu_1.mp3"
@@ -107,6 +111,7 @@ url = "https://www.myinstants.com/media/sounds/joe-pesci-wtf-is-this-piece-of-sh
 
 [sounds.human]
 file = "human.mp3"
+volume = 10
 
 [sounds.peace]
 file = "a-moments-peace-dark-souls.mp3"
@@ -155,6 +160,12 @@ file = "dark-souls-3-hello-carving_cutted.mp3"
 
 [[sounds.hi.clips]]
 file = "hello-there.mp3"
+
+[[sounds.ladies.clips]]
+file = "ladies-1.mp3"
+
+[[sounds.ladies.clips]]
+file = "ladies-2.mp3"
 
 # Example of one command with several clips (a random one plays per use):
 # [[sounds.airhorn.clips]]

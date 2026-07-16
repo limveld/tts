@@ -34,8 +34,8 @@ sfx_cost = 1
 
 # Channel-Point → marks conversion reward (the bot creates/manages it).
 reward_title  = "Convert to Marks"
-reward_cost   = 1000                       # channel points per redemption
-reward_grant  = 500                        # marks granted per redemption
+reward_cost   = 100                       # channel points per redemption
+reward_grant  = 10                        # marks granted per redemption
 reward_prompt = "Convert channel points into marks for !tts and !sfx."
 poll_interval = "30s"                      # how often to check for redemptions
 
