@@ -1,6 +1,6 @@
 # Native Go bot: make it reply-capable + replace StreamElements
 
-Status: in progress — Stage 4 code done (!uptime/!followage); SE dashboard audit + cutover remains
+Status: done — SE chatbot retired (Stages 1–4 complete). Two trivial user actions noted below.
 Type: task
 Created: 2026-07-03
 
@@ -256,6 +256,29 @@ reduces to text commands + timers (already covered) plus the two dynamic default
 `go build/vet/test ./...` clean (StreamInfo/Followage httptest; uptime live/offline, followage
 self/not-following/info-nil-inert; `shortDuration`/`humanAge` tables). Smoke-verified boot.
 
-**Remaining (operational, needs the user):** audit the SE dashboard (Chat Bot → Commands + Timers) in
-Chrome, port text commands → store and timers → `timers.toml`, disable each in SE as it's ported, then
-turn SE's chatbot off. SE overlays/alerts stay. Once done, this issue is complete.
+### 2026-07-17 — Stage 4 audit + cutover (SE dashboard, via Chrome)
+
+Audited the live SE dashboard together. Result: **the cutover was almost entirely already done.**
+
+- **Custom commands:** 6, **all toggled OFF** (`!commands`, `!voices`, `!ttshelp` → our bot's built-ins;
+  `!schedule`/`!discord`/`!socials` were empty "TODO" placeholders). Nothing to port.
+- **Timers:** **none configured.** Nothing to port.
+- **Default commands:** SE's shipped defaults, many left ON — but they're either SE-only features we chose
+  not to replicate (song requests, giveaways/raffles, roulette/duels, quotes, store/items, `!accountage`,
+  `!chatstats`, emote tools) or overlaps we now cover (`!commands`, `!uptime`, `!followage`, the points
+  cmds). The broadcaster confirmed **none of the SE-only features are used** → retire SE fully rather than
+  keep any.
+- **Bot status:** the **SE bot is already "Muted"** in the channel (connected but not posting) — which is
+  why there were never double-responses. Functionally SE's chatbot is already silent.
+
+**Outcome:** the marks economy + commands + timers + `!uptime`/`!followage` fully cover what was used;
+SE's chatbot is retired. SE **overlays/alerts stay** (out of scope; untouched).
+
+**Two trivial user actions (not code):**
+1. In SE → Chatbot → Settings → Bot status, click **Part** to have the SE bot leave the channel (optional —
+   "Muted" already keeps it silent; Part is the clean disconnect).
+2. Run **`mise run bot:auth`** once to grant `moderator:read:followers` so **`!followage`** works
+   (`!uptime` already works on the current token).
+
+Issue 05 complete: the bot is now an authenticated, reply-capable StreamElements replacement
+(commands + timers + full marks economy), 100% on macOS/Go, one dependency (`modernc.org/sqlite`).
