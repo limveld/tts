@@ -38,9 +38,9 @@ func (r *Router) handleCommands(cmd, rest string, m ChatMessage) bool {
 			r.showLeaderboard(m)
 			return true
 		}
-	case "!gamble":
+	case "!g", "!gamble":
 		if r.economy {
-			r.gamble(rest, m)
+			r.openOrJoinGamble(rest, m)
 			return true
 		}
 	case "!give":
@@ -228,7 +228,7 @@ func (r *Router) isBuiltin(cmd string) bool {
 	}
 	if r.economy {
 		switch cmd {
-		case "!marks", "!m", "!leaderboard", "!gamble", "!give", "!grant", "!free", "!paid":
+		case "!marks", "!m", "!leaderboard", "!g", "!gamble", "!give", "!grant", "!free", "!paid":
 			return true
 		}
 	}

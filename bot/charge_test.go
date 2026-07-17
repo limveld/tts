@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"tts/store"
 )
@@ -27,7 +28,7 @@ func econRouter(t *testing.T) (*Router, *fakeTTS, *store.Store, *fakeChat) {
 	r.rnd = rand.New(rand.NewSource(1))
 	r.econ = EconomyConfig{
 		CurrencyName: "marks", TTSCost: 10, SFXCost: 5,
-		GambleMinBet: 10, GambleWinChance: 0.47,
+		GambleMinBet: 10, GambleDuration: 60 * time.Second,
 	}
 	return r, f, st, chat
 }

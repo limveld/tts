@@ -28,12 +28,15 @@ type Router struct {
 	minRole  string              // everyone|sub|vip|mod
 	sfx      map[string]struct{} // sound commands (lowercased, with the leading "!")
 	cooldown *Cooldown
-	sanitize func(text string) (string, bool) // wraps Clean with blocklist+maxChars
-	tts      TTS
-	chat     Chat         // may be nil when the bot isn't authenticated (replies disabled)
-	store    *store.Store // custom commands + marks economy (may be nil → both disabled)
-	rnd      *rand.Rand   // for $random substitution
-	logger   *log.Logger
+	// notifyCooldown rate-limits the "slow down" reply to once per cooldown
+	// window (same duration as cooldown) so a spammer isn't spammed back.
+	notifyCooldown *Cooldown
+	sanitize       func(text string) (string, bool) // wraps Clean with blocklist+maxChars
+	tts            TTS
+	chat           Chat         // may be nil when the bot isn't authenticated (replies disabled)
+	store          *store.Store // custom commands + marks economy (may be nil → both disabled)
+	rnd            *rand.Rand   // for $random substitution
+	logger         *log.Logger
 
 	economy  bool          // marks economy active: enable !marks/!leaderboard/!grant/…
 	econ     EconomyConfig // currency name + per-command costs
@@ -42,6 +45,9 @@ type Router struct {
 
 	cdMu        sync.Mutex           // guards cmdCooldown
 	cmdCooldown map[string]time.Time // per-command global cooldown
+
+	gambleMu sync.Mutex   // guards round (mutated by handler + resolve/flush timers)
+	round    *gambleRound // the open !g gamble, or nil
 }
 
 // Handle processes one chat message.
@@ -79,8 +85,7 @@ func (r *Router) Handle(m ChatMessage) {
 		if !r.eligible(m) {
 			return
 		}
-		if !(m.IsMod || m.IsBroadcaster) && !r.cooldown.Allow(m.User) {
-			r.logger.Printf("cooldown: ignoring %s", m.User)
+		if r.cooldownBlocked(m) {
 			return
 		}
 		if !r.canAfford(m, r.econ.SFXCost) {
@@ -112,8 +117,7 @@ func (r *Router) Handle(m ChatMessage) {
 	if !r.eligible(m) {
 		return
 	}
-	if !(m.IsMod || m.IsBroadcaster) && !r.cooldown.Allow(m.User) {
-		r.logger.Printf("cooldown: ignoring %s", m.User)
+	if r.cooldownBlocked(m) {
 		return
 	}
 
@@ -173,6 +177,27 @@ func (r *Router) chargeAfter(m ChatMessage, cost int64, reason string) {
 }
 
 func (r *Router) eligible(m ChatMessage) bool { return r.roleAllows(r.minRole, m) }
+
+// cooldownBlocked reports whether m's user is on the shared per-user cooldown
+// (mods/broadcaster exempt). On the first block within a window it replies
+// "slow down — Ns left"; further blocks in the same window stay silent.
+func (r *Router) cooldownBlocked(m ChatMessage) bool {
+	if m.IsMod || m.IsBroadcaster {
+		return false
+	}
+	if r.cooldown.Allow(m.User) {
+		return false
+	}
+	if r.notifyCooldown != nil && r.notifyCooldown.Allow(m.User) {
+		left := int(r.cooldown.Remaining(m.User).Seconds() + 0.999)
+		if left < 1 {
+			left = 1
+		}
+		r.reply(m, fmt.Sprintf("@%s slow down — %ds left.", displayName(m), left))
+	}
+	r.logger.Printf("cooldown: ignoring %s", m.User)
+	return true
+}
 
 // roleAllows reports whether m meets the given minimum role (everyone|sub|vip|mod).
 func (r *Router) roleAllows(role string, m ChatMessage) bool {

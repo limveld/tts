@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"log"
+	"strings"
 	"testing"
 	"time"
 )
@@ -20,12 +21,12 @@ func (f *fakeTTS) Say(text, code string) error {
 	f.says = append(f.says, sayCall{text, code})
 	return nil
 }
-func (f *fakeTTS) SFX(name string) error                { f.sfx = append(f.sfx, name); return nil }
-func (f *fakeTTS) Voices() ([]VoiceInfo, error)         { return f.voices, nil }
-func (f *fakeTTS) Pause() error          { f.controls = append(f.controls, "pause"); return nil }
-func (f *fakeTTS) Resume() error         { f.controls = append(f.controls, "resume"); return nil }
-func (f *fakeTTS) Clear() error          { f.controls = append(f.controls, "clear"); return nil }
-func (f *fakeTTS) Skip() error           { f.controls = append(f.controls, "skip"); return nil }
+func (f *fakeTTS) SFX(name string) error        { f.sfx = append(f.sfx, name); return nil }
+func (f *fakeTTS) Voices() ([]VoiceInfo, error) { return f.voices, nil }
+func (f *fakeTTS) Pause() error                 { f.controls = append(f.controls, "pause"); return nil }
+func (f *fakeTTS) Resume() error                { f.controls = append(f.controls, "resume"); return nil }
+func (f *fakeTTS) Clear() error                 { f.controls = append(f.controls, "clear"); return nil }
+func (f *fakeTTS) Skip() error                  { f.controls = append(f.controls, "skip"); return nil }
 
 type replyCall struct{ broadcasterID, parentID, text string }
 
@@ -46,13 +47,14 @@ func (f *fakeChat) Send(broadcasterID, text string) error {
 
 func newTestRouter(tts TTS) *Router {
 	return &Router{
-		cmds:     Commands{TTSPrefix: "!tts", Skip: "!skip", Pause: "!pause", Resume: "!resume", Clear: "!clear", SFX: "!sfx"},
-		minRole:  "everyone",
-		sfx:      map[string]struct{}{"!airhorn": {}, "!bruh": {}},
-		cooldown: NewCooldown(30 * time.Second),
-		sanitize: func(text string) (string, bool) { return Clean(text, []string{"banned"}, 200) },
-		tts:      tts,
-		logger:   log.New(io.Discard, "", 0),
+		cmds:           Commands{TTSPrefix: "!tts", Skip: "!skip", Pause: "!pause", Resume: "!resume", Clear: "!clear", SFX: "!sfx"},
+		minRole:        "everyone",
+		sfx:            map[string]struct{}{"!airhorn": {}, "!bruh": {}},
+		cooldown:       NewCooldown(30 * time.Second),
+		sanitize:       func(text string) (string, bool) { return Clean(text, []string{"banned"}, 200) },
+		tts:            tts,
+		logger:         log.New(io.Discard, "", 0),
+		notifyCooldown: NewCooldown(30 * time.Second),
 	}
 }
 
@@ -146,6 +148,27 @@ func TestRouterCooldownBlocksSecond(t *testing.T) {
 	r.Handle(msg("bob", "!tts two", false)) // within cooldown
 	if len(f.says) != 1 {
 		t.Fatalf("says=%d want 1 (cooldown)", len(f.says))
+	}
+}
+
+func TestCooldownChatterOncePerWindow(t *testing.T) {
+	f := &fakeTTS{}
+	r := newTestRouter(f)
+	chat := &fakeChat{}
+	r.chat = chat
+
+	r.Handle(msg("bob", "!tts one", false))   // allowed, speaks, no reply
+	r.Handle(msg("bob", "!tts two", false))   // blocked -> one "slow down" reply
+	r.Handle(msg("bob", "!tts three", false)) // blocked again -> silent (same window)
+
+	if len(f.says) != 1 {
+		t.Fatalf("says=%d want 1", len(f.says))
+	}
+	if len(chat.replies) != 1 {
+		t.Fatalf("replies=%d want 1 (once per window)", len(chat.replies))
+	}
+	if !strings.Contains(chat.replies[0].text, "slow down") {
+		t.Fatalf("reply=%q want a slow-down notice", chat.replies[0].text)
 	}
 }
 

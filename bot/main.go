@@ -43,11 +43,12 @@ func main() {
 		sanitize: func(text string) (string, bool) {
 			return Clean(text, cfg.Blocklist, cfg.MaxChars)
 		},
-		tts:    NewTTSClient(cfg.TTSURL, cfg.TTSToken),
-		chat:   chat,
-		store:  db,
-		rnd:    rnd,
-		logger: logger,
+		tts:            NewTTSClient(cfg.TTSURL, cfg.TTSToken),
+		chat:           chat,
+		store:          db,
+		rnd:            rnd,
+		logger:         logger,
+		notifyCooldown: NewCooldown(cfg.Cooldown),
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

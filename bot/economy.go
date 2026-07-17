@@ -28,9 +28,9 @@ type EconomyConfig struct {
 	RewardGrant     int64
 	RewardPrompt    string
 	PollInterval    time.Duration
-	// Sub-step B (games):
-	GambleWinChance float64
-	GambleMinBet    int64
+	// Games:
+	GambleMinBet   int64
+	GambleDuration time.Duration // how long an open !g round accepts joins
 }
 
 // LoadEconomyConfig parses points.toml. A missing file is not an error — it just
@@ -41,18 +41,18 @@ func LoadEconomyConfig(path string) (cfg EconomyConfig, enabled bool, err error)
 		return EconomyConfig{}, false, nil
 	}
 	var doc struct {
-		CurrencyName    string  `toml:"currency_name"`
-		AccrualInterval string  `toml:"accrual_interval"`
-		AccrualRate     int64   `toml:"accrual_rate"`
-		TTSCost         int64   `toml:"tts_cost"`
-		SFXCost         int64   `toml:"sfx_cost"`
-		RewardTitle     string  `toml:"reward_title"`
-		RewardCost      int     `toml:"reward_cost"`
-		RewardGrant     int64   `toml:"reward_grant"`
-		RewardPrompt    string  `toml:"reward_prompt"`
-		PollInterval    string  `toml:"poll_interval"`
-		GambleWinChance float64 `toml:"gamble_win_chance"`
-		GambleMinBet    int64   `toml:"gamble_min_bet"`
+		CurrencyName    string `toml:"currency_name"`
+		AccrualInterval string `toml:"accrual_interval"`
+		AccrualRate     int64  `toml:"accrual_rate"`
+		TTSCost         int64  `toml:"tts_cost"`
+		SFXCost         int64  `toml:"sfx_cost"`
+		RewardTitle     string `toml:"reward_title"`
+		RewardCost      int    `toml:"reward_cost"`
+		RewardGrant     int64  `toml:"reward_grant"`
+		RewardPrompt    string `toml:"reward_prompt"`
+		PollInterval    string `toml:"poll_interval"`
+		GambleMinBet    int64  `toml:"gamble_min_bet"`
+		GambleDuration  string `toml:"gamble_duration"`
 	}
 	if _, err := toml.DecodeFile(path, &doc); err != nil {
 		return EconomyConfig{}, false, err
@@ -66,6 +66,10 @@ func LoadEconomyConfig(path string) (cfg EconomyConfig, enabled bool, err error)
 	if err != nil {
 		return EconomyConfig{}, false, fmt.Errorf("poll_interval: %w", err)
 	}
+	gambleDur, err := durationOr(doc.GambleDuration, 60*time.Second)
+	if err != nil {
+		return EconomyConfig{}, false, fmt.Errorf("gamble_duration: %w", err)
+	}
 
 	cfg = EconomyConfig{
 		CurrencyName:    orString(doc.CurrencyName, "marks"),
@@ -78,8 +82,8 @@ func LoadEconomyConfig(path string) (cfg EconomyConfig, enabled bool, err error)
 		RewardGrant:     doc.RewardGrant,
 		RewardPrompt:    doc.RewardPrompt,
 		PollInterval:    poll,
-		GambleWinChance: orFloat(doc.GambleWinChance, 0.47),
 		GambleMinBet:    orInt64(doc.GambleMinBet, 10),
+		GambleDuration:  gambleDur,
 	}
 	return cfg, true, nil
 }
@@ -107,13 +111,6 @@ func orInt64(n, def int64) int64 {
 		return def
 	}
 	return n
-}
-
-func orFloat(f, def float64) float64 {
-	if f == 0 {
-		return def
-	}
-	return f
 }
 
 // TwitchAPI is the slice of the Twitch client the economy runner needs (an

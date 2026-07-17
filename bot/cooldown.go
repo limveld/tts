@@ -28,3 +28,15 @@ func (c *Cooldown) Allow(user string) bool {
 	c.last[user] = t
 	return true
 }
+
+// Remaining returns how long until user may act again (0 if they're free now).
+func (c *Cooldown) Remaining(user string) time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if prev, ok := c.last[user]; ok {
+		if d := c.window - c.now().Sub(prev); d > 0 {
+			return d
+		}
+	}
+	return 0
+}

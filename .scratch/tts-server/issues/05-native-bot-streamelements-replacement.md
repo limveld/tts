@@ -1,6 +1,6 @@
 # Native Go bot: make it reply-capable + replace StreamElements
 
-Status: in progress — Stage 3 done (marks economy + gamble/give + owner grant/free-paid); retire-SE (Stage 4) remains
+Status: in progress — Stage 3 done (economy + multiplayer !g gamble + give + grant/free-paid + cooldown chatter); retire-SE (Stage 4) remains
 Type: task
 Created: 2026-07-03
 
@@ -217,3 +217,25 @@ Two broadcaster-only economy controls requested by the owner.
 grant mint/remove/unseen-resolve/unknown/broadcaster-only; free waives tts but games/accrual still charge;
 persist + broadcaster-only). Smoke-verified: bot boots "economy enabled (paid)" as the broadcaster and
 creates the `settings` table.
+
+### 2026-07-17 — Stage 3D (multiplayer !g gamble + cooldown chatter)
+
+Replaced the 1-player coinflip with a **timed multiplayer pot game** and made the gamble chatty.
+
+- **`bot/gamble.go`** (`!g`, `!gamble` alias): someone opens with `!g <amount>` (a fixed buy-in; `!g all`
+  = their whole balance), others join by typing `!g` for `gamble_duration` (config, default 60s). Buy-ins
+  are **escrowed on join** (`store.Spend` reason `gamble_bet`); at the deadline a **uniform-random winner
+  takes the whole pot** (`gamble_win`), or with **<2 players the round cancels and everyone is refunded**
+  (`gamble_refund`). Round state lives on the Router under `gambleMu`; the resolve/reminder/coalesced-join
+  timers run via `time.AfterFunc`. **Chatter:** announces the open, **coalesces** joins landing within ~2s
+  into one line (rate-limit safe), a "closing soon" reminder ~15s out, and the result/cancel; direct
+  threaded replies for can't-afford / already-in. Old coinflip + `gamble_win_chance` removed; added
+  `gamble_duration`.
+- **Cooldown chatter** (`bot/cooldown.go`, `bot/router.go`): a `!tts`/`!sfx` blocked by the per-user
+  cooldown now replies "slow down @x — Ns left", but **only once per cooldown window** (a second
+  `Cooldown` as the notify limiter; new `Cooldown.Remaining`). (The "suggest valid commands on unknown"
+  idea was **dropped** — it would step on the other bots in chat.)
+
+`go build/vet/test ./...` clean (gamble open/escrow/announce, play-through pays one winner + conserves
+totals, <2 refund, can't-afford, dup-join, `all` opener, coalesced join line, min buy-in; cooldown
+`Remaining`; once-per-window chatter). Smoke-verified boot. Live multiplayer play needs 2+ chatters.

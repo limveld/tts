@@ -39,6 +39,8 @@ reward_grant  = 10                        # marks granted per redemption
 reward_prompt = "Convert channel points into marks for !tts and !sfx."
 poll_interval = "30s"                      # how often to check for redemptions
 
-# Games (sub-step B — !gamble / !give).
-gamble_win_chance = 0.47   # <0.5 gives the house an edge
-gamble_min_bet    = 10
+# Games. !g opens a multiplayer pot gamble: someone types !g <amount> (the
+# buy-in), others join by typing !g for `gamble_duration`, then one winner is
+# drawn and takes the whole pot (needs 2+ players or it refunds). !give transfers.
+gamble_min_bet  = 10       # minimum buy-in to open a gamble
+gamble_duration = "60s"    # how long an open round accepts joins
