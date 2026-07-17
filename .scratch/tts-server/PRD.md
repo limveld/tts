@@ -1,15 +1,56 @@
 # PRD: Expressive TTS engine (Chatterbox) + native reply-capable bot (StreamElements replacement)
 
-Status: ready-for-agent
+Status: done
 Type: prd
 Created: 2026-07-04
+Updated: 2026-07-17
 
 Covers two grilled-and-deferred features, tracked in detail at:
-- [`issues/04-chatterbox-expressive-engine.md`](issues/04-chatterbox-expressive-engine.md)
-- [`issues/05-native-bot-streamelements-replacement.md`](issues/05-native-bot-streamelements-replacement.md)
+- [`issues/04-chatterbox-expressive-engine.md`](issues/04-chatterbox-expressive-engine.md) — **wontfix**
+  (Chatterbox abandoned; expressive need met by Polly instead)
+- [`issues/07-amazon-polly-tts-engine.md`](issues/07-amazon-polly-tts-engine.md) — **done** (the expressive
+  engine, as shipped)
+- [`issues/05-native-bot-streamelements-replacement.md`](issues/05-native-bot-streamelements-replacement.md) — **done**
+- [`issues/08-sfx-volume-and-trim.md`](issues/08-sfx-volume-and-trim.md) — **done** (per-clip SFX volume/trim)
 
 They are documented together here because they share the same TTS server + bot, the same
-queue/player/overlay path, and the same test seams; they can still land independently.
+queue/player/overlay path, and the same test seams; they landed independently.
+
+## Delivered (2026-07-17)
+
+**Both problems are solved and in production — the bot track exactly as designed, the expressive track via a
+different engine.**
+
+**Native reply-capable bot (issue 05) — fully delivered; StreamElements retired.** An authenticated,
+reply-capable Twitch bot, 100% macOS/Go, one dependency (`modernc.org/sqlite`):
+- Chat-managed custom commands (`!addcom`/`!editcom`/`!delcom` with variables, per-command cooldowns +
+  min-role) and activity-gated timers.
+- A full **"marks" loyalty economy**: watch-time accrual (Helix Get Chatters, live-gated) **plus
+  Channel-Point→marks conversion** (a polled, bot-managed reward); `!marks`/`!m` + `!leaderboard`; a
+  **multiplayer pot `!g` gamble** (timed buy-in, winner-takes-pot); `!give`; owner **`!grant`** and a
+  **`!free`/`!paid`** charge toggle. All balance mutations are atomic over an append-only ledger.
+- Informational `!uptime` / `!followage` (migrated from SE's defaults); a "slow down" cooldown notice.
+- **SE cutover complete:** audit found SE's custom commands off, no timers, and the SE bot already muted →
+  chatbot retired. SE overlays/alerts stay (out of scope).
+
+**Intentional divergences from the original plan** (decided during the build, see issue 05 progress log):
+- **Auth is the broadcaster's own account**, not a separate bot account — required to read Channel-Point
+  redemptions (and it covers Get Chatters as the broadcaster).
+- **No manual `!redeem`.** Marks are *spent implicitly* on `!tts`/`!sfx` (per-use cost, owner-toggleable
+  free/paid) and *earned* via accrual **+ Channel-Point conversion** — the conversion path is new vs. the plan.
+- **`!gamble` → `!g`** is a **multiplayer pot** (2+ players, timed, winner takes all), not a solo coinflip.
+- Engine choice is by **server-side voice codes** (`!ttsk` … → kokoro/Polly per `voices.toml`), not a
+  separate `!etts` command.
+- Added beyond the plan: `!grant`, `!free`/`!paid`, `!uptime`, `!followage`, per-clip SFX volume/trim.
+
+**Expressive engine — shipped as Amazon Polly (issue 07), not Chatterbox (issue 04 → wontfix).** Chatterbox
+was integrated but its speech quality on Apple Silicon was poor (MPS crash / CPU-only tradeoffs), so it was
+abandoned. The "dramatic/better voices" need is instead met by **Amazon Polly running concurrently with
+kokoro**, selected per message via the voice codes above. The `!etts` command and the Chatterbox-specific
+decisions below did **not** ship; the `Synthesizer` seam and per-request engine routing they describe **did**
+(carrying Polly instead).
+
+The original plan below is retained as the historical design record.
 
 ## Problem Statement
 
