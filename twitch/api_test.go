@@ -73,6 +73,58 @@ func TestIsLive(t *testing.T) {
 	}
 }
 
+func TestStreamInfo(t *testing.T) {
+	t.Run("live", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/helix/streams", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]string{{"type": "live", "started_at": "2026-07-17T10:00:00Z"}},
+			})
+		})
+		c, _ := newTestClient(t, mux)
+		live, started, err := c.StreamInfo(context.Background(), "b1")
+		if err != nil || !live || started.IsZero() {
+			t.Fatalf("live=%v started=%v err=%v", live, started, err)
+		}
+		if started.UTC().Hour() != 10 {
+			t.Errorf("started=%v want 10:00Z", started)
+		}
+	})
+	t.Run("offline", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/helix/streams", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]string{}})
+		})
+		c, _ := newTestClient(t, mux)
+		live, _, err := c.StreamInfo(context.Background(), "b1")
+		if err != nil || live {
+			t.Fatalf("live=%v err=%v want false", live, err)
+		}
+	})
+}
+
+func TestFollowage(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/helix/channels/followers", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("user_id") == "u1" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]string{{"followed_at": "2026-04-01T00:00:00Z"}},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]string{}})
+	})
+	c, _ := newTestClient(t, mux)
+
+	at, ok, err := c.Followage(context.Background(), "b1", "u1")
+	if err != nil || !ok || at.IsZero() {
+		t.Fatalf("followage u1: at=%v ok=%v err=%v", at, ok, err)
+	}
+	if _, ok, _ := c.Followage(context.Background(), "b1", "u2"); ok {
+		t.Error("non-follower should have ok=false")
+	}
+}
+
 func TestEnsureRewardExistingVsCreate(t *testing.T) {
 	t.Run("existing", func(t *testing.T) {
 		mux := http.NewServeMux()

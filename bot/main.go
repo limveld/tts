@@ -51,6 +51,11 @@ func main() {
 		notifyCooldown: NewCooldown(cfg.Cooldown),
 	}
 
+	// Informational commands (!uptime/!followage) need only the Twitch client.
+	if client != nil {
+		router.info = twitchInfo{client: client}
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

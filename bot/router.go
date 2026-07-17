@@ -42,6 +42,7 @@ type Router struct {
 	econ     EconomyConfig // currency name + per-command costs
 	charging bool          // paid mode: !tts/!sfx deduct marks (false = free mode)
 	resolver UserResolver  // resolves unseen logins for !grant (nil when no Twitch client)
+	info     TwitchInfo    // Helix lookups for !uptime/!followage (nil when no Twitch client)
 
 	cdMu        sync.Mutex           // guards cmdCooldown
 	cmdCooldown map[string]time.Time // per-command global cooldown

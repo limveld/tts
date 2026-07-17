@@ -82,11 +82,13 @@ func (r *Router) grant(rest string, m ChatMessage) {
 // resolveTarget finds a user_id + display for a login: the local users table
 // first (no API), then Helix. ok is false when the login doesn't exist.
 func (r *Router) resolveTarget(login string) (userID, display string, ok bool) {
-	if id, found, err := r.store.ResolveLogin(login); err != nil {
-		r.logger.Printf("grant resolve %q: %v", login, err)
-		return "", "", false
-	} else if found {
-		return id, login, true
+	if r.store != nil {
+		if id, found, err := r.store.ResolveLogin(login); err != nil {
+			r.logger.Printf("resolve %q: %v", login, err)
+			return "", "", false
+		} else if found {
+			return id, login, true
+		}
 	}
 	if r.resolver == nil {
 		return "", "", false

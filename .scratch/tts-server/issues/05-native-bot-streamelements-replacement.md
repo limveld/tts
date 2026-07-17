@@ -1,6 +1,6 @@
 # Native Go bot: make it reply-capable + replace StreamElements
 
-Status: in progress — Stage 3 done (economy + multiplayer !g gamble + give + grant/free-paid + cooldown chatter); retire-SE (Stage 4) remains
+Status: in progress — Stage 4 code done (!uptime/!followage); SE dashboard audit + cutover remains
 Type: task
 Created: 2026-07-03
 
@@ -239,3 +239,23 @@ Replaced the 1-player coinflip with a **timed multiplayer pot game** and made th
 `go build/vet/test ./...` clean (gamble open/escrow/announce, play-through pays one winner + conserves
 totals, <2 refund, can't-afford, dup-join, `all` opener, coalesced join line, min buy-in; cooldown
 `Remaining`; once-per-window chatter). Smoke-verified boot. Live multiplayer play needs 2+ chatters.
+
+### 2026-07-17 — Stage 4 Phase A (uptime/followage) + cutover plan
+
+Grilling found **SE loyalty points were never used** → no balance migration/importer. SE's chatbot usage
+reduces to text commands + timers (already covered) plus the two dynamic defaults we lacked, now built:
+
+- **`!uptime`** (`bot/info.go`): `twitch.StreamInfo` (Get Streams `started_at`; `IsLive` refactored onto
+  it) → "Live for 2h13m" / "Not live right now". No new scope.
+- **`!followage [@user]`** (`bot/info.go`): `twitch.Followage` (Get Channel Followers) → "you've followed
+  for 3 months" / "isn't following". **Adds scope `moderator:read:followers`** → user must re-run
+  `mise run bot:auth` before it works (`!uptime` works on the current token).
+- Both are **informational built-ins** (not economy-gated) behind a new `TwitchInfo` seam on the Router
+  (mirrors `UserResolver`); dispatched before the economy-store guard, added to `isBuiltin`.
+
+`go build/vet/test ./...` clean (StreamInfo/Followage httptest; uptime live/offline, followage
+self/not-following/info-nil-inert; `shortDuration`/`humanAge` tables). Smoke-verified boot.
+
+**Remaining (operational, needs the user):** audit the SE dashboard (Chat Bot → Commands + Timers) in
+Chrome, port text commands → store and timers → `timers.toml`, disable each in SE as it's ported, then
+turn SE's chatbot off. SE overlays/alerts stay. Once done, this issue is complete.

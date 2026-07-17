@@ -13,6 +13,17 @@ import (
 // built-ins, and custom stored commands. It returns true if it handled cmd (so
 // Handle stops), false to fall through to the TTS branch.
 func (r *Router) handleCommands(cmd, rest string, m ChatMessage) bool {
+	// Informational built-ins need only a Twitch client, not the economy store.
+	if r.info != nil {
+		switch cmd {
+		case "!uptime":
+			r.uptime(m)
+			return true
+		case "!followage":
+			r.followage(rest, m)
+			return true
+		}
+	}
 	if r.store == nil {
 		return false
 	}
@@ -224,6 +235,9 @@ func (r *Router) isBuiltin(cmd string) bool {
 	switch cmd {
 	case r.cmds.SFX, r.cmds.Skip, r.cmds.Pause, r.cmds.Resume, r.cmds.Clear,
 		"!addcom", "!editcom", "!delcom", "!commands", "!voices":
+		return true
+	}
+	if r.info != nil && (cmd == "!uptime" || cmd == "!followage") {
 		return true
 	}
 	if r.economy {

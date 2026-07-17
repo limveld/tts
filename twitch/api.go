@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 // This file holds the Helix reads/writes the loyalty-points economy needs:
@@ -117,19 +118,51 @@ func (c *Client) GetChatters(ctx context.Context, broadcasterID, moderatorID str
 	return out, nil
 }
 
-// IsLive reports whether broadcasterID is currently streaming.
-func (c *Client) IsLive(ctx context.Context, broadcasterID string) (bool, error) {
+// StreamInfo reports whether broadcasterID is live and, if so, when the current
+// stream started (for !uptime). startedAt is the zero time when offline.
+func (c *Client) StreamInfo(ctx context.Context, broadcasterID string) (live bool, startedAt time.Time, err error) {
 	q := url.Values{}
 	q.Set("user_id", broadcasterID)
 	var out struct {
 		Data []struct {
-			Type string `json:"type"`
+			Type      string    `json:"type"`
+			StartedAt time.Time `json:"started_at"`
 		} `json:"data"`
 	}
 	if err := c.getJSON(ctx, c.helixBase+"/streams?"+q.Encode(), &out); err != nil {
-		return false, err
+		return false, time.Time{}, err
 	}
-	return len(out.Data) > 0 && out.Data[0].Type == "live", nil
+	if len(out.Data) == 0 || out.Data[0].Type != "live" {
+		return false, time.Time{}, nil
+	}
+	return true, out.Data[0].StartedAt, nil
+}
+
+// IsLive reports whether broadcasterID is currently streaming.
+func (c *Client) IsLive(ctx context.Context, broadcasterID string) (bool, error) {
+	live, _, err := c.StreamInfo(ctx, broadcasterID)
+	return live, err
+}
+
+// Followage returns when userID started following broadcasterID (for
+// !followage). ok is false when they aren't following. Needs the token scope
+// moderator:read:followers.
+func (c *Client) Followage(ctx context.Context, broadcasterID, userID string) (followedAt time.Time, ok bool, err error) {
+	q := url.Values{}
+	q.Set("broadcaster_id", broadcasterID)
+	q.Set("user_id", userID)
+	var out struct {
+		Data []struct {
+			FollowedAt time.Time `json:"followed_at"`
+		} `json:"data"`
+	}
+	if err := c.getJSON(ctx, c.helixBase+"/channels/followers?"+q.Encode(), &out); err != nil {
+		return time.Time{}, false, err
+	}
+	if len(out.Data) == 0 {
+		return time.Time{}, false, nil
+	}
+	return out.Data[0].FollowedAt, true, nil
 }
 
 // EnsureReward returns the id of broadcasterID's custom reward titled title,

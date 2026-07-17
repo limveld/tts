@@ -31,6 +31,7 @@ var scopes = []string{
 	"moderator:read:chatters",
 	"channel:read:redemptions",
 	"channel:manage:redemptions",
+	"moderator:read:followers", // !followage
 }
 
 func main() {
