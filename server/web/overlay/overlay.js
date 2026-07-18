@@ -104,12 +104,41 @@ function renderGamble(d) {
   if (d.endsAt) gambleCountdown = setInterval(tick, 250);
 }
 
+// --- depth rating -----------------------------------------------------------
+// Renders {points, tier} as [depth-tier.png] <points> in the bottom-right. Tier
+// is derived from the same thresholds the bot uses, so the payload's tier is
+// only a fallback. Display caps at 9999 to match the game.
+const depthEl = document.getElementById('depth');
+const DEPTH_THRESHOLDS = [
+  {tier: 5, min: 6000},
+  {tier: 4, min: 4000},
+  {tier: 3, min: 2000},
+  {tier: 2, min: 1000},
+  {tier: 1, min: 0},
+];
+
+function depthTier(points) {
+  for (const t of DEPTH_THRESHOLDS) if (points >= t.min) return t.tier;
+  return 1;
+}
+
+function renderDepth(d) {
+  if (!d || typeof d.points !== 'number') { depthEl.hidden = true; return; }
+  const tier = depthTier(d.points);
+  const shown = Math.min(d.points, 9999);
+  depthEl.hidden = false;
+  depthEl.innerHTML =
+    '<img src="/overlay/images/depth-' + tier + '.png" alt="Depth ' + tier + '">' +
+    '<span class="d-points">' + shown + '</span>';
+}
+
 // --- SSE transport ----------------------------------------------------------
 function connect() {
   const es = new EventSource('/overlay/events' + q);
   es.addEventListener('play', ev => playClip(JSON.parse(ev.data)));
   es.addEventListener('stop', stopClip);
   es.addEventListener('gamble', ev => renderGamble(JSON.parse(ev.data)));
+  es.addEventListener('depth', ev => renderDepth(JSON.parse(ev.data)));
   // EventSource auto-reconnects on error; nothing to do.
 }
 connect();

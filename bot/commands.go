@@ -28,6 +28,9 @@ func (r *Router) handleCommands(cmd, rest string, m ChatMessage) bool {
 		return false
 	}
 	switch cmd {
+	case "!don":
+		r.don(rest, m)
+		return true
 	case "!addcom", "!editcom", "!delcom":
 		if m.IsMod || m.IsBroadcaster {
 			r.adminCommand(cmd, rest, m)
@@ -234,7 +237,7 @@ func (r *Router) reply(m ChatMessage, text string) {
 func (r *Router) isBuiltin(cmd string) bool {
 	switch cmd {
 	case r.cmds.SFX, r.cmds.Skip, r.cmds.Pause, r.cmds.Resume, r.cmds.Clear,
-		"!addcom", "!editcom", "!delcom", "!commands", "!voices":
+		"!addcom", "!editcom", "!delcom", "!commands", "!voices", "!don":
 		return true
 	}
 	if r.info != nil && (cmd == "!uptime" || cmd == "!followage") {

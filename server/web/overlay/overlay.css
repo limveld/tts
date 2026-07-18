@@ -103,3 +103,24 @@ html, body {
   color: var(--gold);
 }
 #gamble .g-result.cancelled { color: #b04a4a; }
+
+/* --- depth rating (bottom-right) ------------------------------------------ */
+#depth {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+#depth[hidden] { display: none; }
+#depth img {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.7));
+}
+#depth .d-points {
+  font-family: var(--serif);
+  font-size: 44px;
+  font-weight: 700;
+  color: var(--gold);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+}
