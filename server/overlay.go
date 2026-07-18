@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"mime"
 	"net/http"
@@ -14,6 +16,12 @@ import (
 	"sync"
 	"time"
 )
+
+// overlayFS holds the full-screen overlay page and its assets (JS/CSS, and the
+// depth-tier images added in a later stage), served at /overlay.
+//
+//go:embed web/overlay
+var overlayFS embed.FS
 
 // Overlay pushes generated clips to a browser page (added as an OBS/Streamlabs
 // Browser Source). OBS renders the page's <audio> natively into the stream mix,
@@ -116,21 +124,42 @@ func (o *Overlay) Done(id int64) {
 	}
 }
 
-// routes registers the overlay endpoints on mux.
+// routes registers the overlay endpoints on mux. The specific API paths
+// (/overlay/events, /overlay/clip/, /overlay/done) are registered as their own
+// patterns so they win over the /overlay/ static subtree by ServeMux precedence.
 func (o *Overlay) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/overlay", o.handlePage)
 	mux.HandleFunc("/overlay/events", o.handleEvents)
 	mux.HandleFunc("/overlay/clip/", o.handleClip)
 	mux.HandleFunc("/overlay/done", o.handleDone)
+	mux.Handle("/overlay/", http.StripPrefix("/overlay/", http.FileServerFS(overlayAssets)))
 }
 
+// overlayAssets is the embedded web/overlay directory as a sub-filesystem, so
+// /overlay/overlay.js maps to web/overlay/overlay.js.
+var overlayAssets = func() fs.FS {
+	sub, err := fs.Sub(overlayFS, "web/overlay")
+	if err != nil {
+		panic(err) // embed path is a compile-time constant; this can't fail
+	}
+	return sub
+}()
+
+// handlePage serves the overlay shell (index.html). The static assets it pulls
+// in (JS/CSS/images) are served unauthenticated by the /overlay/ file server —
+// a Browser Source loads them without the ?token= that only the page URL carries.
 func (o *Overlay) handlePage(w http.ResponseWriter, r *http.Request) {
 	if !o.authed(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	page, err := overlayAssets.(fs.ReadFileFS).ReadFile("index.html")
+	if err != nil {
+		http.Error(w, "overlay page missing", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(overlayHTML))
+	_, _ = w.Write(page)
 }
 
 func (o *Overlay) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -261,67 +290,3 @@ func estimateWavDuration(wav string) time.Duration {
 	secs := float64(fi.Size()) / bytesPerSec
 	return time.Duration(secs * float64(time.Second))
 }
-
-const overlayHTML = `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>TTS Overlay</title>
-<style>html,body{margin:0;background:transparent;overflow:hidden}</style>
-</head>
-<body>
-<script>
-// Carry any ?token= from this page's URL onto the API calls (a Browser Source
-// can't set headers, so the server accepts the token as a query param).
-const token = new URLSearchParams(location.search).get('token');
-const q = token ? ('?token=' + encodeURIComponent(token)) : '';
-let current = null;
-
-function connect() {
-  const es = new EventSource('/overlay/events' + q);
-  es.addEventListener('play', ev => {
-    const d = JSON.parse(ev.data);
-    const audio = new Audio(d.url + q);
-    current = audio;
-    // volume: 0-100 percent -> 0-1 (reduce-only; <audio> caps at 1.0).
-    if (typeof d.volume === 'number') audio.volume = Math.max(0, Math.min(1, d.volume / 100));
-    let acked = false;
-    const done = () => {
-      if (acked) return; acked = true;
-      fetch('/overlay/done' + q, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({id: d.id}),
-        keepalive: true
-      }).catch(() => {});
-    };
-    // trim end: stop and ack once we reach d.end (natural 'ended' also acks).
-    if (d.end > 0) {
-      audio.addEventListener('timeupdate', () => {
-        if (audio.currentTime >= d.end) { audio.pause(); done(); }
-      });
-    }
-    audio.addEventListener('ended', done);
-    audio.addEventListener('error', done);
-    const play = () => audio.play().catch(e => { console.error('tts play blocked:', e); done(); });
-    // trim start: seek before playing so there's no blip from 0 (needs metadata).
-    if (d.start > 0) {
-      audio.addEventListener('loadedmetadata', () => {
-        try { audio.currentTime = d.start; } catch (e) {}
-        play();
-      }, {once: true});
-      audio.load();
-    } else {
-      play();
-    }
-  });
-  es.addEventListener('stop', () => {
-    if (current) { current.pause(); current = null; }
-  });
-  // EventSource auto-reconnects on error; nothing to do.
-}
-connect();
-</script>
-</body>
-</html>
-`

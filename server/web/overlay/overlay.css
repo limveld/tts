@@ -1,0 +1,32 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 1920px;
+  height: 1080px;
+  background: transparent;
+  overflow: hidden;
+  font-family: system-ui, sans-serif;
+}
+
+#stage {
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+}
+
+#top-left {
+  position: absolute;
+  top: 40px;
+  left: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+#depth {
+  position: absolute;
+  bottom: 40px;
+  right: 40px;
+}
+
+.panel[hidden] { display: none; }

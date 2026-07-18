@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Stream Overlay</title>
+<link rel="stylesheet" href="/overlay/overlay.css">
+</head>
+<body>
+<!-- Full-screen transparent overlay. Everything renders from the server's SSE
+     stream; the page holds no game state of its own and never talks to Twitch.
+     Stage 1 wires only the invisible audio player; the game containers below are
+     filled in by later stages. -->
+<div id="stage">
+  <div id="top-left">
+    <div id="wordle" class="panel" hidden></div>
+    <div id="gamble" class="panel" hidden></div>
+  </div>
+  <div id="depth" hidden></div>
+</div>
+<script src="/overlay/overlay.js"></script>
+</body>
+</html>
