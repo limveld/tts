@@ -32,6 +32,7 @@ type EconomyConfig struct {
 	GambleMinBet   int64
 	GambleDuration time.Duration // how long an open !g round accepts joins
 	WordleReward   int64         // marks awarded to a Wordle solver
+	WordleDuration time.Duration // how long a Wordle round runs before it auto-ends
 }
 
 // LoadEconomyConfig parses points.toml. A missing file is not an error — it just
@@ -55,6 +56,7 @@ func LoadEconomyConfig(path string) (cfg EconomyConfig, enabled bool, err error)
 		GambleMinBet    int64  `toml:"gamble_min_bet"`
 		GambleDuration  string `toml:"gamble_duration"`
 		WordleReward    int64  `toml:"wordle_reward"`
+		WordleDuration  string `toml:"wordle_duration"`
 	}
 	if _, err := toml.DecodeFile(path, &doc); err != nil {
 		return EconomyConfig{}, false, err
@@ -72,6 +74,10 @@ func LoadEconomyConfig(path string) (cfg EconomyConfig, enabled bool, err error)
 	if err != nil {
 		return EconomyConfig{}, false, fmt.Errorf("gamble_duration: %w", err)
 	}
+	wordleDur, err := durationOr(doc.WordleDuration, 3*time.Minute)
+	if err != nil {
+		return EconomyConfig{}, false, fmt.Errorf("wordle_duration: %w", err)
+	}
 
 	cfg = EconomyConfig{
 		CurrencyName:    orString(doc.CurrencyName, "marks"),
@@ -87,6 +93,7 @@ func LoadEconomyConfig(path string) (cfg EconomyConfig, enabled bool, err error)
 		GambleMinBet:    orInt64(doc.GambleMinBet, 10),
 		GambleDuration:  gambleDur,
 		WordleReward:    orInt64(doc.WordleReward, 100),
+		WordleDuration:  wordleDur,
 	}
 	return cfg, true, nil
 }

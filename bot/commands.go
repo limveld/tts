@@ -188,24 +188,30 @@ func (r *Router) runCommand(c store.Command, rest string, m ChatMessage) {
 	}
 }
 
-// listCommands replies with the custom command names (dynamic !commands).
+// listCommands replies with the public built-in commands followed by the custom
+// stored commands (dynamic !commands). Mod/broadcaster-only controls are omitted.
 func (r *Router) listCommands(m ChatMessage) {
 	if !(m.IsMod || m.IsBroadcaster) && !r.cooldown.Allow(m.User) {
 		return
 	}
+	// Public built-ins, gated on the same flags used to dispatch them.
+	cmds := []string{r.cmds.TTSPrefix, r.cmds.SFX, "!voices", "!wordle", "!guess", "!wordlewins"}
+	if r.economy {
+		cmds = append(cmds, "!marks", "!leaderboard", "!g", "!give")
+	}
+	if r.info != nil {
+		cmds = append(cmds, "!uptime", "!followage")
+	}
+
 	names, err := r.store.List()
 	if err != nil {
 		r.logger.Printf("list commands: %v", err)
 		return
 	}
-	if len(names) == 0 {
-		r.reply(m, "No custom commands.")
-		return
+	for _, n := range names {
+		cmds = append(cmds, "!"+n)
 	}
-	for i := range names {
-		names[i] = "!" + names[i]
-	}
-	r.reply(m, "Commands: "+strings.Join(names, ", "))
+	r.reply(m, "Commands: "+strings.Join(cmds, ", "))
 }
 
 // listVoices replies with the server's code→voice map (dynamic !voices).

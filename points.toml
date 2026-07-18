@@ -47,5 +47,7 @@ gamble_duration = "60s"    # how long an open round accepts joins
 
 # Wordle: anyone starts a shared 6-row board with !wordle, then everyone guesses
 # with !guess <word> (unlimited guesses per user). Solving it awards the solver
-# `wordle_reward` marks and a win on the !wordlewins leaderboard.
-wordle_reward = 100        # marks awarded to a Wordle solver
+# `wordle_reward` marks and a win on the !wordlewins leaderboard. A round auto-ends
+# after `wordle_duration` if unsolved (the word is revealed).
+wordle_reward   = 100      # marks awarded to a Wordle solver
+wordle_duration = "3m"     # how long a round runs before it auto-ends

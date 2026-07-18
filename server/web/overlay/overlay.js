@@ -90,11 +90,11 @@ function renderGamble(d) {
     return;
   }
 
-  // phase === 'open' — one line: 🎲 <pot> · <players>P · <m:ss>
+  // phase === 'open' — one line: 🎲 <pot> · <players>🤡 · <m:ss>
   gambleEl.innerHTML =
     tag +
     '<span class="g-pot">' + (d.pot || 0) + '</span>' + sep +
-    '<span class="g-players">' + (d.players || 0) + 'P</span>' + sep +
+    '<span class="g-players">' + (d.players || 0) + '🤡</span>' + sep +
     '<span class="g-countdown" id="g-countdown"></span>';
 
   const cd = document.getElementById('g-countdown');
@@ -138,16 +138,30 @@ function renderDepth(d) {
 const wordleEl = document.getElementById('wordle');
 const WORDLE_KB = ['QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM'];
 const WORDLE_RANK = {unused: 0, absent: 1, present: 2, correct: 3};
+let wordleCountdown = null;
+let wordlePrevRows = 0; // rows shown last render, to detect a freshly-added guess
 
 function renderWordle(d) {
-  if (!d || d.hidden) { wordleEl.hidden = true; wordleEl.innerHTML = ''; return; }
+  if (wordleCountdown) { clearInterval(wordleCountdown); wordleCountdown = null; }
+
+  if (!d || d.hidden) {
+    wordleEl.hidden = true; wordleEl.innerHTML = ''; wordlePrevRows = 0; return;
+  }
   const rows = d.rows || [];
   const max = d.max || 6;
+  // Animate only the just-added row (rows grew by exactly one since last render),
+  // so replays/resets don't spuriously flash the whole board.
+  const newIdx = rows.length === wordlePrevRows + 1 ? rows.length - 1 : -1;
+  wordlePrevRows = rows.length;
+
+  // countdown (live rounds only)
+  let head = '';
+  if (!d.done && d.endsAt) head = '<div class="w-countdown" id="w-countdown"></div>';
 
   // board
   let board = '<div class="w-board">';
   for (let r = 0; r < max; r++) {
-    board += '<div class="w-row">';
+    board += '<div class="w-row' + (r === newIdx ? ' w-row-new' : '') + '">';
     const row = rows[r];
     for (let c = 0; c < 5; c++) {
       if (row) {
@@ -184,7 +198,15 @@ function renderWordle(d) {
   }
 
   wordleEl.hidden = false;
-  wordleEl.innerHTML = board + kb + banner;
+  wordleEl.innerHTML = head + board + kb + banner;
+
+  // drive the countdown by updating only the text (no re-render / re-animate).
+  if (!d.done && d.endsAt) {
+    const cd = document.getElementById('w-countdown');
+    const tick = () => { cd.textContent = '⏱ ' + fmtCountdown(d.endsAt - Date.now()); };
+    tick();
+    wordleCountdown = setInterval(tick, 250);
+  }
 }
 
 // --- SSE transport ----------------------------------------------------------

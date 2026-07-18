@@ -68,6 +68,17 @@ html, body {
   grid-template-columns: repeat(5, 1fr);
   gap: 6px;
 }
+/* Fade in the just-added guess row so a landed play is clearly visible. */
+#wordle .w-row-new { animation: wRowFadeIn 0.6s ease; }
+@keyframes wRowFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+#wordle .w-countdown {
+  font-family: var(--mono);
+  font-size: 16px;
+  letter-spacing: 2px;
+  color: var(--correct);
+  margin-bottom: 8px;
+}
 #wordle .w-tile {
   width: 56px;
   height: 56px;

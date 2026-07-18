@@ -116,6 +116,53 @@ func TestWordleSixMissesLoses(t *testing.T) {
 	}
 }
 
+func TestWordleTimerExpiresAsLoss(t *testing.T) {
+	r, _, _, chat := econRouter(t)
+	ov := &fakeOverlay{}
+	r.overlay = ov
+	r.Handle(emsg("alice", "!wordle", false))
+	r.wordle.Answer = "ABOUT"
+	st := r.wordle
+
+	r.expireWordle(st) // fire the timer directly (deterministic)
+
+	if r.wordle == nil || !r.wordle.Done || r.wordle.Won {
+		t.Fatalf("after expiry: %+v want done+not won", r.wordle)
+	}
+	if !strings.Contains(lastSend(chat), "Time's up") || !strings.Contains(lastSend(chat), "ABOUT") {
+		t.Fatalf("expiry announcement=%q", lastSend(chat))
+	}
+	p, _ := ov.last("wordle")
+	if ws := p.data.(*wordleState); !ws.Done || ws.Reveal != "ABOUT" {
+		t.Fatalf("expiry push=%+v want done + reveal ABOUT", ws)
+	}
+}
+
+func TestWordleExpireNoOpAfterSolve(t *testing.T) {
+	r, _, _, _ := econRouter(t)
+	r.Handle(emsg("alice", "!wordle", false))
+	r.wordle.Answer = "ABOUT"
+	st := r.wordle
+	r.Handle(emsg("bob", "!guess ABOUT", false)) // solved
+
+	if !st.Won {
+		t.Fatal("expected a solved round")
+	}
+	// The still-pending timer must not overwrite the win.
+	r.expireWordle(st)
+	if !r.wordle.Won {
+		t.Fatalf("expireWordle clobbered a solved round: %+v", r.wordle)
+	}
+}
+
+func TestWordleStartSetsDeadline(t *testing.T) {
+	r, _, _, _ := econRouter(t)
+	r.Handle(emsg("alice", "!wordle", false))
+	if r.wordle.EndsAt <= 0 {
+		t.Fatalf("EndsAt=%d want a future deadline", r.wordle.EndsAt)
+	}
+}
+
 func TestWordleAlreadyRunning(t *testing.T) {
 	r, _, _, chat := econRouter(t)
 	r.Handle(emsg("alice", "!wordle", false))

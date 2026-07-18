@@ -28,10 +28,11 @@ var (
 )
 
 const (
-	wordleRows         = 6
-	wordleCols         = 5
-	wordleSettingKey   = "wordle_round"
-	wordleResultLinger = 12 * time.Second // how long the solved/failed board lingers before it's cleared
+	wordleRows            = 6
+	wordleCols            = 5
+	wordleSettingKey      = "wordle_round"
+	wordleResultLinger    = 12 * time.Second // how long the solved/failed board lingers before it's cleared
+	wordleDefaultDuration = 3 * time.Minute  // fallback round length when unset (economy off / no points.toml)
 )
 
 // wordleRowState is one played row: the guess and its per-letter scoring
@@ -47,11 +48,22 @@ type wordleRowState struct {
 // mid-round can't leak it via devtools).
 type wordleState struct {
 	Answer string           `json:"-"`
+	RoomID string           `json:"-"` // channel to announce into when the round auto-expires
 	Rows   []wordleRowState `json:"rows"`
 	Done   bool             `json:"done"`
 	Won    bool             `json:"won"`
 	Max    int              `json:"max"`
+	EndsAt int64            `json:"endsAt,omitempty"` // unix millis; drives the overlay countdown
 	Reveal string           `json:"answer,omitempty"` // set to Answer only when Done, for the overlay banner
+}
+
+// wordleDuration is the configured round length, falling back to the default
+// when the economy (which carries the config) isn't loaded.
+func (r *Router) wordleDuration() time.Duration {
+	if r.econ.WordleDuration > 0 {
+		return r.econ.WordleDuration
+	}
+	return wordleDefaultDuration
 }
 
 func splitWords(raw string) []string {
@@ -127,17 +139,22 @@ func (r *Router) startWordle(m ChatMessage) {
 		r.reply(m, "a Wordle round is already going — !guess <word> (5 letters).")
 		return
 	}
+	dur := r.wordleDuration()
 	st := &wordleState{
 		Answer: wordleAnswers[r.rnd.Intn(len(wordleAnswers))],
+		RoomID: m.RoomID,
 		Rows:   []wordleRowState{},
 		Max:    wordleRows,
+		EndsAt: time.Now().Add(dur).UnixMilli(),
 	}
 	r.wordle = st
 	r.persistWordle(st)
 	r.wordleMu.Unlock()
 
+	time.AfterFunc(dur, func() { r.expireWordle(st) })
 	r.pushWordle(st)
-	r.chat.Send(m.RoomID, fmt.Sprintf("🟩 Wordle! Everyone guess the 5-letter word: !guess <word> — %d tries.", wordleRows))
+	r.chat.Send(m.RoomID, fmt.Sprintf("🟩 Wordle! Everyone guess the 5-letter word: !guess <word> — %d tries, %s on the clock.",
+		wordleRows, shortDuration(dur)))
 }
 
 // guessWordle submits a guess to the active round (!guess <word>).
@@ -191,6 +208,28 @@ func (r *Router) guessWordle(rest string, m ChatMessage) {
 		r.chat.Send(m.RoomID, fmt.Sprintf("💀 Out of guesses — the word was %s. !wordle to play again.", answer))
 		r.scheduleWordleClear(st)
 	}
+}
+
+// expireWordle ends the round when its timer fires — a loss that reveals the
+// word. No-op if the round was already superseded or finished (solve / 6 misses).
+func (r *Router) expireWordle(st *wordleState) {
+	r.wordleMu.Lock()
+	if r.wordle != st || st.Done {
+		r.wordleMu.Unlock()
+		return
+	}
+	st.Done = true
+	st.Won = false
+	st.Reveal = st.Answer
+	answer, roomID := st.Answer, st.RoomID
+	r.persistWordle(st)
+	r.wordleMu.Unlock()
+
+	r.pushWordle(st)
+	if r.chat != nil {
+		r.chat.Send(roomID, fmt.Sprintf("⏱ Time's up — the word was %s. !wordle to play again.", answer))
+	}
+	r.scheduleWordleClear(st)
 }
 
 // awardWordle grants the solver marks (when the economy is on) and bumps their
@@ -259,10 +298,12 @@ func (r *Router) persistWordle(st *wordleState) {
 	// payload which only reveals it when Done.
 	rec := struct {
 		Answer string           `json:"answer"`
+		RoomID string           `json:"roomID"`
 		Rows   []wordleRowState `json:"rows"`
 		Done   bool             `json:"done"`
 		Won    bool             `json:"won"`
-	}{st.Answer, st.Rows, st.Done, st.Won}
+		EndsAt int64            `json:"endsAt"`
+	}{st.Answer, st.RoomID, st.Rows, st.Done, st.Won, st.EndsAt}
 	b, err := json.Marshal(rec)
 	if err != nil {
 		r.logger.Printf("wordle persist marshal: %v", err)
@@ -309,9 +350,11 @@ func (r *Router) loadWordle() {
 	}
 	var rec struct {
 		Answer string           `json:"answer"`
+		RoomID string           `json:"roomID"`
 		Rows   []wordleRowState `json:"rows"`
 		Done   bool             `json:"done"`
 		Won    bool             `json:"won"`
+		EndsAt int64            `json:"endsAt"`
 	}
 	if err := json.Unmarshal([]byte(v), &rec); err != nil {
 		r.logger.Printf("wordle load unmarshal: %v", err)
@@ -321,9 +364,20 @@ func (r *Router) loadWordle() {
 		r.clearWordlePersist()
 		return
 	}
-	st := &wordleState{Answer: rec.Answer, Rows: rec.Rows, Done: rec.Done, Won: rec.Won, Max: wordleRows}
+	st := &wordleState{Answer: rec.Answer, RoomID: rec.RoomID, Rows: rec.Rows, Done: rec.Done, Won: rec.Won, Max: wordleRows, EndsAt: rec.EndsAt}
 	r.wordle = st
 	r.pushWordle(st)
+
+	// Reschedule the round timer for whatever time is left (the AfterFunc from the
+	// original start didn't survive the restart).
+	if st.EndsAt > 0 {
+		remaining := time.Until(time.UnixMilli(st.EndsAt))
+		if remaining <= 0 {
+			go r.expireWordle(st)
+		} else {
+			time.AfterFunc(remaining, func() { r.expireWordle(st) })
+		}
+	}
 }
 
 func isAlpha(s string) bool {
