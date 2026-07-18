@@ -67,10 +67,18 @@ func Open(path string) (*Store, error) {
 		`CREATE INDEX IF NOT EXISTS ledger_user ON ledger(user_id)`,
 		// Idempotent channel-point crediting: a redemption id credits at most once.
 		`CREATE UNIQUE INDEX IF NOT EXISTS ledger_ref ON ledger(ref) WHERE ref IS NOT NULL`,
-		// Small key/value store for runtime toggles (e.g. the free/paid charge mode).
+		// Small key/value store for runtime toggles (e.g. the free/paid charge mode,
+		// the depth points total, and the current Wordle round JSON).
 		`CREATE TABLE IF NOT EXISTS settings (
 			key   TEXT PRIMARY KEY,
 			value TEXT NOT NULL
+		)`,
+		// Wordle win tally (one row per solver). See store/wordle.go.
+		`CREATE TABLE IF NOT EXISTS wordle_wins (
+			user_id TEXT PRIMARY KEY,
+			login   TEXT NOT NULL,
+			display TEXT NOT NULL,
+			wins    INTEGER NOT NULL DEFAULT 0
 		)`,
 	}
 	for _, stmt := range schema {

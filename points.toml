@@ -44,3 +44,8 @@ poll_interval = "30s"                      # how often to check for redemptions
 # drawn and takes the whole pot (needs 2+ players or it refunds). !give transfers.
 gamble_min_bet  = 10       # minimum buy-in to open a gamble
 gamble_duration = "60s"    # how long an open round accepts joins
+
+# Wordle: anyone starts a shared 6-row board with !wordle, then everyone guesses
+# with !guess <word> (unlimited guesses per user). Solving it awards the solver
+# `wordle_reward` marks and a win on the !wordlewins leaderboard.
+wordle_reward = 100        # marks awarded to a Wordle solver

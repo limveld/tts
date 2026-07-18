@@ -60,6 +60,8 @@ func main() {
 	// Seed the overlay with the persisted depth value so it renders on connect
 	// (the server caches the push and replays it to the browser source).
 	router.pushDepth(router.depthPoints())
+	// Restore an in-progress Wordle round (survives a bot restart).
+	router.loadWordle()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -50,6 +50,9 @@ type Router struct {
 
 	gambleMu sync.Mutex   // guards round (mutated by handler + resolve/flush timers)
 	round    *gambleRound // the open !g gamble, or nil
+
+	wordleMu sync.Mutex   // guards wordle (mutated by handler + the clear timer)
+	wordle   *wordleState // the active Wordle round, or nil when idle
 }
 
 // Handle processes one chat message.

@@ -132,6 +132,62 @@ function renderDepth(d) {
     '<span class="d-points">' + shown + '</span>';
 }
 
+// --- wordle -----------------------------------------------------------------
+// Renders {rows:[{guess,result}], done, won, max, answer?} as a shared 6x5 board
+// plus a colored keyboard. Ported from raw/wordle-chat-overlay.html. {hidden:true}
+// clears it.
+const wordleEl = document.getElementById('wordle');
+const WORDLE_KB = ['QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM'];
+const WORDLE_RANK = {unused: 0, absent: 1, present: 2, correct: 3};
+
+function renderWordle(d) {
+  if (!d || d.hidden) { wordleEl.hidden = true; wordleEl.innerHTML = ''; return; }
+  const rows = d.rows || [];
+  const max = d.max || 6;
+
+  // board
+  let board = '<div class="w-board">';
+  for (let r = 0; r < max; r++) {
+    board += '<div class="w-row">';
+    const row = rows[r];
+    for (let c = 0; c < 5; c++) {
+      if (row) {
+        board += '<div class="w-tile ' + row.result[c] + '">' + row.guess[c] + '</div>';
+      } else {
+        board += '<div class="w-tile"></div>';
+      }
+    }
+    board += '</div>';
+  }
+  board += '</div>';
+
+  // keyboard letter states (best rank seen across all rows)
+  const states = {};
+  for (const row of rows) {
+    for (let i = 0; i < 5; i++) {
+      const L = row.guess[i], s = row.result[i];
+      if (WORDLE_RANK[s] > WORDLE_RANK[states[L] || 'unused']) states[L] = s;
+    }
+  }
+  let kb = '<div class="w-keyboard">';
+  for (const rowStr of WORDLE_KB) {
+    kb += '<div class="w-krow">';
+    for (const L of rowStr) kb += '<div class="w-key ' + (states[L] || '') + '">' + L + '</div>';
+    kb += '</div>';
+  }
+  kb += '</div>';
+
+  let banner = '';
+  if (d.done) {
+    banner = d.won
+      ? '<div class="w-banner">SOLVED — ' + (d.answer || '') + '</div>'
+      : '<div class="w-banner lost">THE WORD WAS ' + (d.answer || '') + '</div>';
+  }
+
+  wordleEl.hidden = false;
+  wordleEl.innerHTML = board + kb + banner;
+}
+
 // --- SSE transport ----------------------------------------------------------
 function connect() {
   const es = new EventSource('/overlay/events' + q);
@@ -139,6 +195,7 @@ function connect() {
   es.addEventListener('stop', stopClip);
   es.addEventListener('gamble', ev => renderGamble(JSON.parse(ev.data)));
   es.addEventListener('depth', ev => renderDepth(JSON.parse(ev.data)));
+  es.addEventListener('wordle', ev => renderWordle(JSON.parse(ev.data)));
   // EventSource auto-reconnects on error; nothing to do.
 }
 connect();
