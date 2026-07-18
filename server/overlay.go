@@ -38,16 +38,26 @@ type Overlay struct {
 	mu      sync.Mutex
 	clients map[chan []byte]struct{} // connected SSE clients
 	acks    map[int64]chan struct{}  // pending playback acks, keyed by clip id
+	// lastState holds the most recent payload pushed for each render kind
+	// (gamble/depth/wordle), replayed to every newly-connected client so an OBS
+	// source reload re-renders immediately. Audio (play/stop) is transient and
+	// never cached.
+	lastState map[string][]byte
 }
+
+// stateKinds are the render kinds accepted by POST /overlay/state and replayed
+// on reconnect. Audio is not a state kind (it's transient).
+var stateKinds = map[string]bool{"gamble": true, "depth": true, "wordle": true}
 
 // NewOverlay builds the hub. tmpDir is where the queue writes tts-<id>.wav files.
 func NewOverlay(tmpDir, token string, logger *log.Logger) *Overlay {
 	return &Overlay{
-		tmpDir:  tmpDir,
-		token:   token,
-		logger:  logger,
-		clients: make(map[chan []byte]struct{}),
-		acks:    make(map[int64]chan struct{}),
+		tmpDir:    tmpDir,
+		token:     token,
+		logger:    logger,
+		clients:   make(map[chan []byte]struct{}),
+		acks:      make(map[int64]chan struct{}),
+		lastState: make(map[string][]byte),
 	}
 }
 
@@ -61,9 +71,14 @@ func (o *Overlay) authed(r *http.Request) bool {
 	return o.token == "" || r.URL.Query().Get("token") == o.token
 }
 
+// sseMessage formats one SSE event frame.
+func sseMessage(event string, data []byte) []byte {
+	return fmt.Appendf(nil, "event: %s\ndata: %s\n\n", event, data)
+}
+
 // broadcast sends an SSE event to every connected client (non-blocking).
 func (o *Overlay) broadcast(event string, data []byte) {
-	msg := fmt.Appendf(nil, "event: %s\ndata: %s\n\n", event, data)
+	msg := sseMessage(event, data)
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	for ch := range o.clients {
@@ -72,6 +87,21 @@ func (o *Overlay) broadcast(event string, data []byte) {
 		default: // slow client; drop rather than block the worker
 		}
 	}
+}
+
+// pushState broadcasts a render-state event (gamble/depth/wordle) and caches it
+// as the last-known payload for that kind so reconnecting clients get it replayed.
+func (o *Overlay) pushState(kind string, data []byte) {
+	msg := sseMessage(kind, data)
+	o.mu.Lock()
+	o.lastState[kind] = msg
+	for ch := range o.clients {
+		select {
+		case ch <- msg:
+		default:
+		}
+	}
+	o.mu.Unlock()
 }
 
 // Play tells the overlay to play clip id from url and blocks until the page acks
@@ -130,6 +160,7 @@ func (o *Overlay) Done(id int64) {
 func (o *Overlay) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/overlay", o.handlePage)
 	mux.HandleFunc("/overlay/events", o.handleEvents)
+	mux.HandleFunc("/overlay/state", o.handleState)
 	mux.HandleFunc("/overlay/clip/", o.handleClip)
 	mux.HandleFunc("/overlay/done", o.handleDone)
 	mux.Handle("/overlay/", http.StripPrefix("/overlay/", http.FileServerFS(overlayAssets)))
@@ -180,6 +211,12 @@ func (o *Overlay) handleEvents(w http.ResponseWriter, r *http.Request) {
 	o.mu.Lock()
 	o.clients[ch] = struct{}{}
 	n := len(o.clients)
+	// Snapshot the cached render states so this client renders immediately on
+	// (re)connect, without waiting for the next push.
+	replay := make([][]byte, 0, len(o.lastState))
+	for _, msg := range o.lastState {
+		replay = append(replay, msg)
+	}
 	o.mu.Unlock()
 	o.logger.Printf("overlay: browser source connected (%d total)", n)
 	defer func() {
@@ -190,6 +227,9 @@ func (o *Overlay) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	fmt.Fprint(w, ": connected\n\n")
+	for _, msg := range replay {
+		_, _ = w.Write(msg)
+	}
 	flusher.Flush()
 
 	keepalive := time.NewTicker(15 * time.Second)
@@ -206,6 +246,39 @@ func (o *Overlay) handleEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// handleState accepts a render-state push from the bot: POST /overlay/state with
+// {"kind":"gamble|depth|wordle","data":{...}}. It broadcasts the data as an SSE
+// event named by kind and caches it as the last-known payload for replay on
+// reconnect. Auth is the same ?token= scheme as the other overlay endpoints.
+func (o *Overlay) handleState(w http.ResponseWriter, r *http.Request) {
+	if !o.authed(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Kind string          `json:"kind"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if !stateKinds[body.Kind] {
+		http.Error(w, "unknown kind", http.StatusBadRequest)
+		return
+	}
+	data := []byte(body.Data)
+	if len(data) == 0 {
+		data = []byte("{}")
+	}
+	o.pushState(body.Kind, data)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleClip serves tmpDir/tts-<id><ext> (e.g. .wav for TTS, .mp3 for SFX). The

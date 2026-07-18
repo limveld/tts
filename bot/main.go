@@ -49,6 +49,7 @@ func main() {
 		rnd:            rnd,
 		logger:         logger,
 		notifyCooldown: NewCooldown(cfg.Cooldown),
+		overlay:        NewOverlayClient(cfg.TTSURL, cfg.TTSToken, logger),
 	}
 
 	// Informational commands (!uptime/!followage) need only the Twitch client.

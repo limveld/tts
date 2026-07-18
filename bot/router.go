@@ -43,6 +43,7 @@ type Router struct {
 	charging bool          // paid mode: !tts/!sfx deduct marks (false = free mode)
 	resolver UserResolver  // resolves unseen logins for !grant (nil when no Twitch client)
 	info     TwitchInfo    // Helix lookups for !uptime/!followage (nil when no Twitch client)
+	overlay  OverlayPusher // pushes gamble/depth/wordle render state to the overlay (may be nil)
 
 	cdMu        sync.Mutex           // guards cmdCooldown
 	cmdCooldown map[string]time.Time // per-command global cooldown
