@@ -1,6 +1,6 @@
 # PRD: Full-screen overlay upgrade (Wordle + gamble panel + depth rating)
 
-Status: ready-for-agent
+Status: done — delivered 2026-07-18 (all 5 stages; see the tracking issue)
 Type: prd
 Created: 2026-07-18
 

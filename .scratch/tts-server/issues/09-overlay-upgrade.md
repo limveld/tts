@@ -1,6 +1,6 @@
 # Full-screen overlay: merge audio + Wordle + gamble panel + depth rating
 
-Status: ready-for-agent
+Status: done — all 5 stages shipped (2026-07-18)
 Type: task
 Created: 2026-07-18
 
@@ -87,6 +87,35 @@ Twitch chat ──IRC──> bot (existing reader)
 
 - Audio/synthesis pipeline + VLC path; other OBS overlays/alerts; Wordle hard-mode / anti-cheat beyond dict
   validation / multi-board; depth beyond `[icon] <points>` (no bar, no title, no `localStorage`).
+
+## Progress log
+
+- **Stage 1 — shell (done):** replaced the inline `overlayHTML` with an embedded
+  `server/web/overlay/` dir (`//go:embed`), served full-screen at `/overlay`; audio
+  play/stop ported unchanged into `overlay.js`. httptest covers page + asset serving
+  and the `?token=` gate.
+- **Stage 2 — transport (done):** authed `POST /overlay/state {kind,data}` broadcasts
+  an SSE event and caches last-known per kind; new SSE clients get `gamble/depth/wordle`
+  replayed (audio not). `bot/overlay.go` `OverlayClient` pushes via `TTSURL`+`TTSToken`,
+  serialized (ordered) + non-blocking. Tests: broadcast, replay-on-connect, unknown-kind
+  400, push-client payload + ordering.
+- **Stage 3 — gamble panel (done):** `gamble.go` emits `{phase,buyIn,players,pot,endsAt,
+  winner,cancelled}` on open/join/resolve/cancel; overlay renders pot/players/countdown +
+  result flash→fade, with a delayed hidden push to clear stale state.
+- **Stage 4 — depth (done):** `!don +N/-N/N` (broadcaster+mods) adjusts a persisted,
+  clamped (0..10000) points value; pushes `{points,tier}`; overlay renders
+  `[depth-tier.png] <points>` bottom-right. Value pushed on startup. 5 PNGs embedded.
+- **Stage 5 — Wordle (done):** Go engine — `!wordle`/`!guess`/`!wordlewins`, shared 6-row
+  board, dup-letter scoring, marks reward + persisted win tally, JSON round persistence
+  (survives restart), chat announcements; overlay renders ported tiles + keyboard. Word
+  lists embedded (500 answers / 4883 valid). `wordle_reward` in points.toml.
+
+Verified end-to-end against a live server: `/overlay` + assets + depth PNG serve,
+`POST /overlay/state` caches + replays to a fresh SSE client, auth 401 / unknown-kind 400.
+Full `go build/vet/test ./...` green; `go test -race ./bot ./server` clean.
+
+Follow-ups (not blocking): self-host the Cinzel/JetBrains Mono fonts (currently Google
+Fonts CDN, falls back to system offline); optional `!guess` anti-spam cooldown.
 
 ## References
 
