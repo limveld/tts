@@ -6,9 +6,39 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
+
+// fakeOverlay records pushed state for assertions in game tests.
+type fakeOverlay struct {
+	mu     sync.Mutex
+	pushes []overlayPush
+}
+
+type overlayPush struct {
+	kind string
+	data any
+}
+
+func (f *fakeOverlay) Push(kind string, data any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pushes = append(f.pushes, overlayPush{kind, data})
+}
+
+// last returns the most recent push of the given kind, or (zero,false).
+func (f *fakeOverlay) last(kind string) (overlayPush, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.pushes) - 1; i >= 0; i-- {
+		if f.pushes[i].kind == kind {
+			return f.pushes[i], true
+		}
+	}
+	return overlayPush{}, false
+}
 
 func TestOverlayClientPush(t *testing.T) {
 	type received struct {

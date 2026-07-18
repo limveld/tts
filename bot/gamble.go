@@ -24,6 +24,51 @@ const gambleJoinCoalesce = 2 * time.Second
 // posts (skipped when the round is too short for it to be useful).
 const gambleReminderLead = 15 * time.Second
 
+// gambleResultLinger is how long the overlay shows the winner/cancelled result
+// before the panel is cleared from the overlay's cached state.
+const gambleResultLinger = 8 * time.Second
+
+// gamblePanelData is the overlay render state for the gamble panel. Phase is
+// "open" (round accepting joins, with a countdown to EndsAt), "result" (winner or
+// cancelled flash), or "hidden" (no active round; clears the panel).
+type gamblePanelData struct {
+	Phase     string `json:"phase"`
+	BuyIn     int64  `json:"buyIn,omitempty"`
+	Players   int    `json:"players,omitempty"`
+	Pot       int64  `json:"pot,omitempty"`
+	EndsAt    int64  `json:"endsAt,omitempty"` // unix millis when the round closes
+	Winner    string `json:"winner,omitempty"`
+	Cancelled bool   `json:"cancelled,omitempty"`
+}
+
+// pushGamble sends the gamble panel state to the overlay (no-op when the overlay
+// isn't configured). Safe to call while holding gambleMu — the push is queued,
+// not sent inline.
+func (r *Router) pushGamble(g *gambleRound, phase, winner string, cancelled bool) {
+	if r.overlay == nil {
+		return
+	}
+	d := gamblePanelData{
+		Phase:     phase,
+		BuyIn:     g.buyIn,
+		Players:   len(g.entrants),
+		Pot:       g.pot(),
+		Winner:    winner,
+		Cancelled: cancelled,
+	}
+	if phase == "open" && !g.endsAt.IsZero() {
+		d.EndsAt = g.endsAt.UnixMilli()
+	}
+	r.overlay.Push("gamble", d)
+}
+
+// pushGambleHidden clears the gamble panel from the overlay.
+func (r *Router) pushGambleHidden() {
+	if r.overlay != nil {
+		r.overlay.Push("gamble", gamblePanelData{Phase: "hidden"})
+	}
+}
+
 type entrant struct {
 	userID  string
 	login   string
@@ -33,6 +78,7 @@ type entrant struct {
 type gambleRound struct {
 	roomID   string
 	buyIn    int64
+	endsAt   time.Time // deadline (for the overlay countdown)
 	entrants []entrant
 	joined   map[string]bool // userID set (dup-join guard)
 	pending  []string        // display names buffered for the next coalesced join line
@@ -102,19 +148,21 @@ func (r *Router) openGambleLocked(rest string, m ChatMessage) (announce, reply s
 		return "", fmt.Sprintf("@%s you only have %s %s.", displayName(m), comma(bal), r.econ.CurrencyName)
 	}
 
+	dur := r.econ.GambleDuration
 	round := &gambleRound{
 		roomID:   m.RoomID,
 		buyIn:    buyIn,
+		endsAt:   time.Now().Add(dur),
 		entrants: []entrant{{m.UserID, m.User, displayName(m)}},
 		joined:   map[string]bool{m.UserID: true},
 	}
 	r.round = round
 
-	dur := r.econ.GambleDuration
 	time.AfterFunc(dur, func() { r.resolveGamble(round) })
 	if dur > gambleReminderLead+5*time.Second {
 		time.AfterFunc(dur-gambleReminderLead, func() { r.remindGamble(round) })
 	}
+	r.pushGamble(round, "open", "", false)
 
 	return fmt.Sprintf("%s started a gamble! Buy-in %s %s — type !g in the next %ds to join.",
 		displayName(m), comma(buyIn), r.econ.CurrencyName, int(dur.Seconds())), ""
@@ -150,6 +198,7 @@ func (r *Router) joinGambleLocked(m ChatMessage) (reply string) {
 		rd.flushing = true
 		time.AfterFunc(gambleJoinCoalesce, func() { r.flushJoins(rd) })
 	}
+	r.pushGamble(rd, "open", "", false)
 	return ""
 }
 
@@ -211,6 +260,8 @@ func (r *Router) resolveGamble(round *gambleRound) {
 		if len(entrants) == 1 {
 			msg = fmt.Sprintf("Gamble cancelled — nobody else joined. @%s refunded.", entrants[0].display)
 		}
+		r.pushGamble(round, "result", "", true)
+		time.AfterFunc(gambleResultLinger, r.pushGambleHidden)
 		r.chat.Send(roomID, msg)
 		return
 	}
@@ -221,6 +272,8 @@ func (r *Router) resolveGamble(round *gambleRound) {
 		r.logger.Printf("gamble payout %s: %v", winner.login, err)
 		return
 	}
+	r.pushGamble(round, "result", winner.display, false)
+	time.AfterFunc(gambleResultLinger, r.pushGambleHidden)
 	r.chat.Send(roomID, fmt.Sprintf("🎉 @%s wins the pot of %s %s! (%d players)",
 		winner.display, comma(pot), r.econ.CurrencyName, len(entrants)))
 }

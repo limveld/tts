@@ -149,6 +149,57 @@ func TestGambleCoalescedJoinLine(t *testing.T) {
 	}
 }
 
+func TestGamblePushesPanelState(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	ov := &fakeOverlay{}
+	r.overlay = ov
+	st.Credit("id-alice", 500, "accrual", "")
+	st.Credit("id-bob", 500, "accrual", "")
+
+	// open -> panel with pot=100, 1 player, a deadline for the countdown.
+	r.Handle(gmsg("alice", "!g 100"))
+	p, ok := ov.last("gamble")
+	if !ok {
+		t.Fatal("no gamble push on open")
+	}
+	d := p.data.(gamblePanelData)
+	if d.Phase != "open" || d.Pot != 100 || d.Players != 1 || d.EndsAt == 0 {
+		t.Fatalf("open panel=%+v want phase=open pot=100 players=1 endsAt>0", d)
+	}
+
+	// join -> pot=200, 2 players.
+	r.Handle(gmsg("bob", "!g"))
+	p, _ = ov.last("gamble")
+	d = p.data.(gamblePanelData)
+	if d.Phase != "open" || d.Pot != 200 || d.Players != 2 {
+		t.Fatalf("join panel=%+v want pot=200 players=2", d)
+	}
+
+	// resolve -> result with a winner.
+	r.resolveGamble(r.round)
+	p, _ = ov.last("gamble")
+	d = p.data.(gamblePanelData)
+	if d.Phase != "result" || d.Winner == "" {
+		t.Fatalf("result panel=%+v want phase=result winner set", d)
+	}
+}
+
+func TestGambleCancelPushesCancelledPanel(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	ov := &fakeOverlay{}
+	r.overlay = ov
+	st.Credit("id-alice", 500, "accrual", "")
+
+	r.Handle(gmsg("alice", "!g 100"))
+	r.resolveGamble(r.round) // alone -> cancelled
+
+	p, _ := ov.last("gamble")
+	d := p.data.(gamblePanelData)
+	if d.Phase != "result" || !d.Cancelled {
+		t.Fatalf("cancel panel=%+v want phase=result cancelled=true", d)
+	}
+}
+
 func TestGambleBelowMinBet(t *testing.T) {
 	r, _, st, chat := econRouter(t) // GambleMinBet=10
 	st.Credit("id-alice", 500, "accrual", "")

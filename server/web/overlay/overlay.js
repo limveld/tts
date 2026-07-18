@@ -50,11 +50,66 @@ function stopClip() {
   if (current) { current.pause(); current = null; }
 }
 
+// --- gamble panel -----------------------------------------------------------
+// Renders {phase:"open"|"result"|"hidden", buyIn, players, pot, endsAt, winner,
+// cancelled}. During an open round a local countdown ticks toward endsAt; the
+// result flashes the winner (or "cancelled") then fades; hidden clears it.
+const gambleEl = document.getElementById('gamble');
+let gambleCountdown = null;
+
+function fmtCountdown(ms) {
+  if (ms < 0) ms = 0;
+  const s = Math.round(ms / 1000);
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+function renderGamble(d) {
+  if (gambleCountdown) { clearInterval(gambleCountdown); gambleCountdown = null; }
+
+  if (!d || d.phase === 'hidden') {
+    gambleEl.hidden = true;
+    gambleEl.innerHTML = '';
+    return;
+  }
+
+  gambleEl.hidden = false;
+  gambleEl.classList.remove('fading');
+
+  if (d.phase === 'result') {
+    const label = d.cancelled ? 'CANCELLED' : ('🎉 ' + (d.winner || ''));
+    gambleEl.innerHTML =
+      '<div class="g-title">Gamble</div>' +
+      '<div class="g-stats">' +
+        '<div class="g-stat"><div class="g-num">' + (d.pot || 0) + '</div><div class="g-label">Pot</div></div>' +
+        '<div class="g-stat"><div class="g-num">' + (d.players || 0) + '</div><div class="g-label">Players</div></div>' +
+      '</div>' +
+      '<div class="g-result' + (d.cancelled ? ' cancelled' : '') + '">' + label + '</div>';
+    // fade out shortly before the server clears the cached state.
+    setTimeout(() => gambleEl.classList.add('fading'), 6000);
+    return;
+  }
+
+  // phase === 'open'
+  gambleEl.innerHTML =
+    '<div class="g-title">Gamble</div>' +
+    '<div class="g-stats">' +
+      '<div class="g-stat"><div class="g-num" id="g-pot">' + (d.pot || 0) + '</div><div class="g-label">Pot</div></div>' +
+      '<div class="g-stat"><div class="g-num" id="g-players">' + (d.players || 0) + '</div><div class="g-label">Players</div></div>' +
+    '</div>' +
+    '<div class="g-countdown" id="g-countdown"></div>';
+
+  const cd = document.getElementById('g-countdown');
+  const tick = () => { cd.textContent = fmtCountdown((d.endsAt || 0) - Date.now()); };
+  tick();
+  if (d.endsAt) gambleCountdown = setInterval(tick, 250);
+}
+
 // --- SSE transport ----------------------------------------------------------
 function connect() {
   const es = new EventSource('/overlay/events' + q);
   es.addEventListener('play', ev => playClip(JSON.parse(ev.data)));
   es.addEventListener('stop', stopClip);
+  es.addEventListener('gamble', ev => renderGamble(JSON.parse(ev.data)));
   // EventSource auto-reconnects on error; nothing to do.
 }
 connect();
