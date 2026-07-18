@@ -75,28 +75,27 @@ function renderGamble(d) {
   gambleEl.hidden = false;
   gambleEl.classList.remove('fading');
 
+  const sep = '<span class="g-sep">·</span>';
+  const tag = '<span class="g-tag">🎲</span>';
+
   if (d.phase === 'result') {
-    const label = d.cancelled ? 'CANCELLED' : ('🎉 ' + (d.winner || ''));
+    const winner = d.cancelled
+      ? '<span class="g-winner cancelled">cancelled</span>'
+      : '<span class="g-winner">🎉 ' + (d.winner || '') + '</span>';
     gambleEl.innerHTML =
-      '<div class="g-title">Gamble</div>' +
-      '<div class="g-stats">' +
-        '<div class="g-stat"><div class="g-num">' + (d.pot || 0) + '</div><div class="g-label">Pot</div></div>' +
-        '<div class="g-stat"><div class="g-num">' + (d.players || 0) + '</div><div class="g-label">Players</div></div>' +
-      '</div>' +
-      '<div class="g-result' + (d.cancelled ? ' cancelled' : '') + '">' + label + '</div>';
+      tag +
+      '<span class="g-pot">' + (d.pot || 0) + '</span>' + sep + winner;
     // fade out shortly before the server clears the cached state.
     setTimeout(() => gambleEl.classList.add('fading'), 6000);
     return;
   }
 
-  // phase === 'open'
+  // phase === 'open' — one line: 🎲 <pot> · <players>P · <m:ss>
   gambleEl.innerHTML =
-    '<div class="g-title">Gamble</div>' +
-    '<div class="g-stats">' +
-      '<div class="g-stat"><div class="g-num" id="g-pot">' + (d.pot || 0) + '</div><div class="g-label">Pot</div></div>' +
-      '<div class="g-stat"><div class="g-num" id="g-players">' + (d.players || 0) + '</div><div class="g-label">Players</div></div>' +
-    '</div>' +
-    '<div class="g-countdown" id="g-countdown"></div>';
+    tag +
+    '<span class="g-pot">' + (d.pot || 0) + '</span>' + sep +
+    '<span class="g-players">' + (d.players || 0) + 'P</span>' + sep +
+    '<span class="g-countdown" id="g-countdown"></span>';
 
   const cd = document.getElementById('g-countdown');
   const tick = () => { cd.textContent = fmtCountdown((d.endsAt || 0) - Date.now()); };

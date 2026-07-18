@@ -27,13 +27,15 @@ html, body {
   height: 1080px;
 }
 
-#top-left {
+#top-right {
   position: absolute;
   top: 40px;
-  left: 40px;
+  right: 40px;
+  left: auto;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  align-items: flex-end;
+  gap: 20px;
 }
 
 #depth {
@@ -49,6 +51,11 @@ html, body {
   --correct: #538d4e;
   --present: #b59f3b;
   --absent: #3a3a3c;
+  /* Center the board and keyboard on one axis so the (slightly wider) keyboard
+     sits centered under the board columns. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 #wordle .w-board {
   display: grid;
@@ -114,65 +121,35 @@ html, body {
 }
 #wordle .w-banner.lost { color: #b04a4a; }
 
-/* --- gamble panel --------------------------------------------------------- */
+/* --- gamble panel (compact, one line) ------------------------------------- */
 #gamble {
-  width: 320px;
-  padding: 18px 22px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 16px;
   background: var(--panel-bg);
-  border: 2px solid var(--panel-border);
-  border-radius: 10px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  font-size: 20px;
+  line-height: 1;
   transition: opacity 0.6s ease;
 }
 #gamble.fading { opacity: 0; }
 
-#gamble .g-title {
+#gamble .g-tag {
   font-family: var(--serif);
-  font-size: 26px;
-  letter-spacing: 4px;
+  font-size: 15px;
+  letter-spacing: 2px;
   color: var(--gold);
-  text-align: center;
-  margin-bottom: 12px;
   text-transform: uppercase;
 }
-
-#gamble .g-stats {
-  display: flex;
-  justify-content: space-around;
-  gap: 12px;
-}
-#gamble .g-stat {
-  text-align: center;
-}
-#gamble .g-stat .g-num {
-  font-size: 34px;
-  font-weight: 700;
-  color: var(--present);
-  line-height: 1.1;
-}
-#gamble .g-stat .g-label {
-  font-size: 12px;
-  letter-spacing: 2px;
-  opacity: 0.7;
-  text-transform: uppercase;
-}
-
-#gamble .g-countdown {
-  margin-top: 14px;
-  text-align: center;
-  font-size: 20px;
-  letter-spacing: 2px;
-  color: var(--correct);
-}
-
-#gamble .g-result {
-  margin-top: 12px;
-  text-align: center;
-  font-family: var(--serif);
-  font-size: 22px;
-  color: var(--gold);
-}
-#gamble .g-result.cancelled { color: #b04a4a; }
+#gamble .g-pot { font-weight: 700; color: var(--present); }
+#gamble .g-players { color: var(--text); opacity: 0.9; }
+#gamble .g-countdown { font-weight: 700; color: var(--correct); }
+#gamble .g-sep { opacity: 0.4; }
+#gamble .g-winner { font-weight: 700; color: var(--gold); }
+#gamble .g-winner.cancelled { color: #b04a4a; }
 
 /* --- depth rating (bottom-right) ------------------------------------------ */
 #depth {
@@ -182,15 +159,15 @@ html, body {
 }
 #depth[hidden] { display: none; }
 #depth img {
-  width: 96px;
-  height: 96px;
+  width: 64px;
+  height: 64px;
   object-fit: contain;
   filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.7));
 }
 #depth .d-points {
   font-family: var(--serif);
-  font-size: 44px;
+  font-size: 30px;
   font-weight: 700;
-  color: var(--gold);
+  color: #fff;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
 }
