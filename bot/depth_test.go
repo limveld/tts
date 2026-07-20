@@ -17,49 +17,46 @@ func TestDepthTier(t *testing.T) {
 	}
 }
 
-func TestDonRelativeAndAbsolute(t *testing.T) {
+func broadcasterMsg(text string) ChatMessage {
+	m := emsg("host", text, true)
+	m.IsBroadcaster = true
+	return m
+}
+
+func TestSetDepthAndPB(t *testing.T) {
 	r, _, _, chat := econRouter(t)
 	ov := &fakeOverlay{}
 	r.overlay = ov
 
-	broadcaster := func(text string) ChatMessage {
-		m := emsg("host", text, true)
-		m.IsBroadcaster = true
-		return m
-	}
-
-	// Absolute set.
-	r.Handle(broadcaster("!don 2500"))
-	if got := r.depthPoints(); got != 2500 {
-		t.Fatalf("after set: points=%d want 2500", got)
+	// Set the rating; PB matches the first value.
+	r.Handle(broadcasterMsg("!r 4200"))
+	if got := r.depthPoints(); got != 4200 {
+		t.Fatalf("after !r 4200: points=%d want 4200", got)
 	}
 	p, ok := ov.last("depth")
-	if !ok || p.data.(depthData).Points != 2500 || p.data.(depthData).Tier != 3 {
-		t.Fatalf("push=%+v want points=2500 tier=3", p.data)
+	if !ok {
+		t.Fatal("no depth push")
+	}
+	if d := p.data.(depthData); d.Points != 4200 || d.Tier != 4 || d.PB != 4200 {
+		t.Fatalf("push=%+v want points=4200 tier=4 pb=4200", d)
 	}
 
-	// Relative add.
-	r.Handle(broadcaster("!don +2000"))
-	if got := r.depthPoints(); got != 4500 {
-		t.Fatalf("after +2000: points=%d want 4500", got)
+	// A lower set leaves the PB untouched.
+	r.Handle(broadcasterMsg("!r 3800"))
+	if got, pb := r.depthPoints(), r.depthPB(); got != 3800 || pb != 4200 {
+		t.Fatalf("after !r 3800: points=%d pb=%d want 3800/4200", got, pb)
 	}
 
-	// Relative subtract.
-	r.Handle(broadcaster("!don -1000"))
-	if got := r.depthPoints(); got != 3500 {
-		t.Fatalf("after -1000: points=%d want 3500", got)
+	// A new high raises the PB.
+	r.Handle(broadcasterMsg("!r 5000"))
+	if got, pb := r.depthPoints(), r.depthPB(); got != 5000 || pb != 5000 {
+		t.Fatalf("after !r 5000: points=%d pb=%d want 5000/5000", got, pb)
 	}
 
-	// Clamp at 0.
-	r.Handle(broadcaster("!don -99999"))
-	if got := r.depthPoints(); got != 0 {
-		t.Fatalf("after big subtract: points=%d want 0 (clamped)", got)
-	}
-
-	// Clamp at max.
-	r.Handle(broadcaster("!don 99999"))
-	if got := r.depthPoints(); got != depthMaxPoints {
-		t.Fatalf("after big set: points=%d want %d (clamped)", got, depthMaxPoints)
+	// !don is an alias for the same set behavior.
+	r.Handle(broadcasterMsg("!don 1500"))
+	if got, pb := r.depthPoints(), r.depthPB(); got != 1500 || pb != 5000 {
+		t.Fatalf("after !don 1500: points=%d pb=%d want 1500/5000", got, pb)
 	}
 
 	if len(chat.replies) == 0 {
@@ -67,16 +64,30 @@ func TestDonRelativeAndAbsolute(t *testing.T) {
 	}
 }
 
-func TestDonRequiresModOrBroadcaster(t *testing.T) {
+func TestSetDepthClamps(t *testing.T) {
+	r, _, _, _ := econRouter(t)
+	r.overlay = &fakeOverlay{}
+
+	r.Handle(broadcasterMsg("!r -50"))
+	if got := r.depthPoints(); got != 0 {
+		t.Fatalf("negative set: points=%d want 0 (clamped)", got)
+	}
+	r.Handle(broadcasterMsg("!r 99999"))
+	if got, pb := r.depthPoints(), r.depthPB(); got != depthMaxPoints || pb != depthMaxPoints {
+		t.Fatalf("overflow set: points=%d pb=%d want %d/%d", got, pb, depthMaxPoints, depthMaxPoints)
+	}
+}
+
+func TestSetDepthRequiresModOrBroadcaster(t *testing.T) {
 	r, _, _, _ := econRouter(t)
 	ov := &fakeOverlay{}
 	r.overlay = ov
 
-	r.Handle(emsg("rando", "!don 5000", false)) // not mod/broadcaster
+	r.Handle(emsg("rando", "!r 5000", false)) // not mod/broadcaster
 	if got := r.depthPoints(); got != 0 {
 		t.Fatalf("non-mod changed depth to %d, want 0", got)
 	}
 	if _, ok := ov.last("depth"); ok {
-		t.Error("non-mod !don should not push depth state")
+		t.Error("non-mod !r should not push depth state")
 	}
 }

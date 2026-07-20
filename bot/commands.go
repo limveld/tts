@@ -31,8 +31,8 @@ func (r *Router) handleCommands(cmd, rest string, m ChatMessage) bool {
 		return false
 	}
 	switch cmd {
-	case "!don":
-		r.don(rest, m)
+	case "!don", "!r":
+		r.setDepth(rest, m)
 		return true
 	case "!wordle":
 		r.startWordle(m)
@@ -255,7 +255,7 @@ func (r *Router) reply(m ChatMessage, text string) {
 func (r *Router) isBuiltin(cmd string) bool {
 	switch cmd {
 	case r.cmds.SFX, r.cmds.Skip, r.cmds.Pause, r.cmds.Resume, r.cmds.Clear,
-		"!addcom", "!editcom", "!delcom", "!commands", "!voices", "!don", "!so",
+		"!addcom", "!editcom", "!delcom", "!commands", "!voices", "!don", "!r", "!so",
 		"!wordle", "!guess", "!wordlewins":
 		return true
 	}

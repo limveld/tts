@@ -8,11 +8,13 @@ import (
 
 // The Deep-of-Night depth rating. The bot owns the value (persisted in the
 // store, no localStorage) and pushes it to the overlay, which renders a depth
-// icon + the points number in the bottom-right corner. Broadcaster/mods adjust
-// it with "!don +N" / "!don -N" (relative) or "!don N" (set an absolute value).
+// icon + the current rating and an all-time personal best in the bottom-right
+// corner. Broadcaster/mods set the rating directly with "!r N" / "!don N"; the PB
+// auto-rises whenever a new rating beats it.
 
 const (
 	depthSettingKey = "depth_points"
+	depthPBKey      = "depth_pb"
 	depthMaxPoints  = 10000 // matches the prototype's cap
 )
 
@@ -21,6 +23,7 @@ const (
 type depthData struct {
 	Points int64 `json:"points"`
 	Tier   int   `json:"tier"`
+	PB     int64 `json:"pb"`
 }
 
 // depthTier maps a points total to a depth rank (1-5), using the prototype's
@@ -40,21 +43,18 @@ func depthTier(points int64) int {
 	}
 }
 
-// don handles "!don +N" / "!don -N" / "!don N" (broadcaster/mods only).
-func (r *Router) don(rest string, m ChatMessage) {
+// setDepth handles "!r N" / "!don N" (broadcaster/mods only): set the rating to
+// an exact value, clamped to [0, depthMaxPoints]. The PB auto-rises to match a
+// new high.
+func (r *Router) setDepth(rest string, m ChatMessage) {
 	if !(m.IsMod || m.IsBroadcaster) {
 		return
 	}
 	arg := strings.TrimSpace(rest)
-	n, err := strconv.ParseInt(arg, 10, 64)
+	next, err := strconv.ParseInt(arg, 10, 64)
 	if arg == "" || err != nil {
-		r.reply(m, "usage: !don +N / -N (or !don N to set an absolute value).")
+		r.reply(m, "usage: !r <rating> (e.g. !r 4200)")
 		return
-	}
-	// A leading sign means a relative adjustment; a bare number sets the value.
-	next := n
-	if strings.HasPrefix(arg, "+") || strings.HasPrefix(arg, "-") {
-		next = r.depthPoints() + n
 	}
 	if next < 0 {
 		next = 0
@@ -66,18 +66,32 @@ func (r *Router) don(rest string, m ChatMessage) {
 		r.logger.Printf("depth persist: %v", err)
 		return
 	}
+
+	pb := r.depthPB()
+	if next > pb {
+		pb = next
+		if err := r.store.SetSetting(depthPBKey, strconv.FormatInt(pb, 10)); err != nil {
+			r.logger.Printf("depth pb persist: %v", err)
+		}
+	}
+
 	r.pushDepth(next)
-	r.reply(m, fmt.Sprintf("Depth: %s (rank %d).", comma(next), depthTier(next)))
+	r.reply(m, fmt.Sprintf("Depth: %s (rank %d). PB %s.", comma(next), depthTier(next), comma(pb)))
 }
 
 // depthPoints reads the persisted depth total (0 when unset).
-func (r *Router) depthPoints() int64 {
+func (r *Router) depthPoints() int64 { return r.depthSetting(depthSettingKey) }
+
+// depthPB reads the persisted all-time personal best (0 when unset).
+func (r *Router) depthPB() int64 { return r.depthSetting(depthPBKey) }
+
+func (r *Router) depthSetting(key string) int64 {
 	if r.store == nil {
 		return 0
 	}
-	v, ok, err := r.store.GetSetting(depthSettingKey)
+	v, ok, err := r.store.GetSetting(key)
 	if err != nil {
-		r.logger.Printf("depth read: %v", err)
+		r.logger.Printf("depth read %s: %v", key, err)
 		return 0
 	}
 	if !ok {
@@ -87,10 +101,11 @@ func (r *Router) depthPoints() int64 {
 	return n
 }
 
-// pushDepth sends the current depth state to the overlay (no-op without one).
+// pushDepth sends the current depth state (rating + PB) to the overlay (no-op
+// without one).
 func (r *Router) pushDepth(points int64) {
 	if r.overlay == nil {
 		return
 	}
-	r.overlay.Push("depth", depthData{Points: points, Tier: depthTier(points)})
+	r.overlay.Push("depth", depthData{Points: points, Tier: depthTier(points), PB: r.depthPB()})
 }

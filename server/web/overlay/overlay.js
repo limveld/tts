@@ -104,9 +104,9 @@ function renderGamble(d) {
 }
 
 // --- depth rating -----------------------------------------------------------
-// Renders {points, tier} as [depth-tier.png] <points> in the bottom-right. Tier
-// is derived from the same thresholds the bot uses, so the payload's tier is
-// only a fallback. Display caps at 9999 to match the game.
+// Renders {points, tier, pb} as [depth-tier.png] <points> · PB <pb> in the
+// bottom-right. Tier is derived from the same thresholds the bot uses, so the
+// payload's tier is only a fallback. Display caps at 9999 to match the game.
 const depthEl = document.getElementById('depth');
 const DEPTH_THRESHOLDS = [
   {tier: 5, min: 6000},
@@ -121,14 +121,19 @@ function depthTier(points) {
   return 1;
 }
 
+function depthFmt(n) {
+  return Math.min(n, 9999).toLocaleString('en-US'); // 9999 display cap, thousands separators
+}
+
 function renderDepth(d) {
   if (!d || typeof d.points !== 'number') { depthEl.hidden = true; return; }
   const tier = depthTier(d.points);
-  const shown = Math.min(d.points, 9999);
+  const pb = (typeof d.pb === 'number' && d.pb > 0)
+    ? '<span class="d-pb">· PB ' + depthFmt(d.pb) + '</span>' : '';
   depthEl.hidden = false;
   depthEl.innerHTML =
     '<img src="/overlay/images/depth-' + tier + '.png" alt="Depth ' + tier + '">' +
-    '<span class="d-points">' + shown + '</span>';
+    '<span class="d-points">' + depthFmt(d.points) + '</span>' + pb;
 }
 
 // --- wordle -----------------------------------------------------------------

@@ -45,6 +45,9 @@ html, body {
 }
 
 .panel[hidden] { display: none; }
+/* Id-scoped so this wins over #wordle/#gamble { display: flex } on specificity —
+   otherwise a hidden, emptied panel keeps rendering as an empty box. */
+#wordle[hidden], #gamble[hidden] { display: none; }
 
 /* --- wordle board --------------------------------------------------------- */
 #wordle {
@@ -180,6 +183,14 @@ html, body {
   font-size: 30px;
   font-weight: 700;
   color: #fff;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+}
+#depth .d-pb {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--gold);
+  opacity: 0.9;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
 }
 
