@@ -1,6 +1,6 @@
 # Event notification popups: shoutouts (!so + auto) + ad reminder
 
-Status: ready-for-agent
+Status: done — all 3 stages shipped (2026-07-20)
 Type: task
 Created: 2026-07-20
 
@@ -71,6 +71,25 @@ message = "📺 Heads up! Ads in about a minute — don't go anywhere, back soon
   `ResetSession` → again; `adDue(next, now, lead, lastWarned)` window+dedup; config parse.
 - **Manual/live:** curl a `notify` toast (shoutout card + ad icon), reload source → no replay; add a
   login and have them chat; `!so @x`; re-auth for `channel:read:ads`, confirm ad warning ~1 min out.
+
+## Progress log
+
+- **Stage 1 (done):** transient `notify` kind on `POST /overlay/state` (broadcast, never
+  cached/replayed); bottom-left toast card (slide-in / 5s / fade), queued; shoutout = avatar + 2
+  lines, ad = single line; toast title text white. Verified live (shoutout card + ad toast) + a
+  reload confirms no replay.
+- **Stage 2 (done):** Helix `GetChannelInfo` + avatar (`profile_image_url`, `GetUserByID`);
+  `TwitchInfo.ShoutoutInfo`; `Router.notify`; `!so @user` (mods) + allow-list auto-trigger
+  (once/session, gated on `sessionLive`) at the top of `Handle`; `notifications.toml` load.
+- **Stage 3 (done):** Helix `AdSchedule`; `Events` poll loop (live tracking → `resetShoutSession`
+  + `sessionLive`; ad reminder via pure `adDue` + dedup); `channel:read:ads` scope + bot-auth;
+  `notifications.toml` sample.
+
+Full `go build/vet/test ./...` green; `go test -race ./bot ./server` clean. Live check of the
+overlay toasts done via the SSE path.
+
+Follow-ups (not blocking): the live ad-reminder path needs a re-auth (`mise run bot:auth`) for
+`channel:read:ads` and a channel with scheduled ads to exercise end-to-end.
 
 ## Out of scope
 

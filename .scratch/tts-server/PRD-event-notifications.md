@@ -1,6 +1,6 @@
 # PRD: Event notification popups (shoutouts + ad reminder)
 
-Status: ready-for-agent
+Status: done — delivered 2026-07-20 (all 3 stages; see the tracking issue)
 Type: prd
 Created: 2026-07-20
 
