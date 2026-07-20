@@ -227,7 +227,7 @@ html, body {
   font-family: var(--serif);
   font-size: 24px;
   font-weight: 700;
-  color: var(--gold);
+  color: #fff;
 }
 .toast .t-line2 {
   font-family: var(--mono);
