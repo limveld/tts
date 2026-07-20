@@ -60,11 +60,12 @@ file = "du-3.mp3"
 
 [[sounds.fail.clips]]
 file = "spongebob-fail.mp3"
+volume = 10
 url = "https://www.myinstants.com/media/sounds/spongebob-fail.mp3"
 
 [[sounds.fail.clips]]
 file = "fail.mp3"
-volume = 50
+volume = 10
 
 [sounds.tu]
 file = "tuturu_1.mp3"
@@ -163,9 +164,11 @@ file = "hello-there.mp3"
 
 [[sounds.ladies.clips]]
 file = "ladies-1.mp3"
+volume = 50
 
 [[sounds.ladies.clips]]
 file = "ladies-2.mp3"
+volume = 50
 
 # Example of one command with several clips (a random one plays per use):
 # [[sounds.airhorn.clips]]
