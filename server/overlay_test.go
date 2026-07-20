@@ -139,6 +139,39 @@ func TestOverlayStateReplayOnConnect(t *testing.T) {
 	}
 }
 
+func TestOverlayNotifyIsTransientNotReplayed(t *testing.T) {
+	srv := newTestOverlayServer(t, "")
+
+	// A notify pushed before anyone connects must NOT be replayed on connect
+	// (unlike the cached state kinds).
+	if pr := postState(t, srv.URL, `{"kind":"notify","data":{"kind":"ad","line1":"first"}}`); pr.StatusCode != http.StatusNoContent {
+		t.Fatalf("POST notify = %d, want 204", pr.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/overlay/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("connect events: %v", err)
+	}
+	defer resp.Body.Close()
+	r := bufio.NewReader(resp.Body)
+
+	// Now push a live notify — this one should arrive (the earlier one must not).
+	time.Sleep(50 * time.Millisecond)
+	if pr := postState(t, srv.URL, `{"kind":"notify","data":{"kind":"shoutout","line1":"live"}}`); pr.StatusCode != http.StatusNoContent {
+		t.Fatalf("POST notify = %d, want 204", pr.StatusCode)
+	}
+	got := readSSEEvent(t, r, "notify")
+	if strings.Contains(got, "first") {
+		t.Errorf("stale notify was replayed: %q", got)
+	}
+	if !strings.Contains(got, "live") {
+		t.Errorf("live notify data = %q, want line1:live", got)
+	}
+}
+
 func TestOverlayStateRejectsUnknownKind(t *testing.T) {
 	srv := newTestOverlayServer(t, "")
 	resp := postState(t, srv.URL, `{"kind":"bogus","data":{}}`)

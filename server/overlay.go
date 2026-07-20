@@ -45,8 +45,9 @@ type Overlay struct {
 	lastState map[string][]byte
 }
 
-// stateKinds are the render kinds accepted by POST /overlay/state and replayed
-// on reconnect. Audio is not a state kind (it's transient).
+// stateKinds are the render kinds accepted by POST /overlay/state that are cached
+// and replayed on reconnect. Audio and the transient "notify" toast are not state
+// kinds — they're shown once and never replayed.
 var stateKinds = map[string]bool{"gamble": true, "depth": true, "wordle": true}
 
 // NewOverlay builds the hub. tmpDir is where the queue writes tts-<id>.wav files.
@@ -269,15 +270,19 @@ func (o *Overlay) handleState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if !stateKinds[body.Kind] {
-		http.Error(w, "unknown kind", http.StatusBadRequest)
-		return
-	}
 	data := []byte(body.Data)
 	if len(data) == 0 {
 		data = []byte("{}")
 	}
-	o.pushState(body.Kind, data)
+	switch {
+	case stateKinds[body.Kind]:
+		o.pushState(body.Kind, data) // cached + replayed on reconnect
+	case body.Kind == "notify":
+		o.broadcast("notify", data) // transient: shown once, never cached/replayed
+	default:
+		http.Error(w, "unknown kind", http.StatusBadRequest)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

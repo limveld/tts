@@ -209,6 +209,62 @@ function renderWordle(d) {
   }
 }
 
+// --- notification toasts (bottom-left) --------------------------------------
+// Transient {kind:"shoutout"|"ad", line1, line2?, avatar?}. Shown one at a time
+// (slide-in, hold 5s, fade out); queued so bursts don't overlap. Built via DOM
+// APIs so names/game text can't inject markup.
+const notifyEl = document.getElementById('notify');
+const notifyQueue = [];
+let notifyShowing = false;
+
+function enqueueNotify(d) {
+  notifyQueue.push(d);
+  if (!notifyShowing) showNextNotify();
+}
+
+function showNextNotify() {
+  const d = notifyQueue.shift();
+  if (!d) { notifyShowing = false; return; }
+  notifyShowing = true;
+
+  const toast = document.createElement('div');
+  toast.className = 'toast enter' + (d.kind === 'ad' ? ' ad' : '');
+
+  if (d.kind === 'shoutout' && d.avatar) {
+    const img = document.createElement('img');
+    img.className = 't-avatar';
+    img.src = d.avatar;
+    img.alt = '';
+    toast.appendChild(img);
+  } else if (d.kind === 'shoutout') {
+    const icon = document.createElement('div');
+    icon.className = 't-icon';
+    icon.textContent = '📢';
+    toast.appendChild(icon);
+  }
+  // ad: line1 already carries its 📺, so no separate media element.
+
+  const body = document.createElement('div');
+  body.className = 't-body';
+  const l1 = document.createElement('div');
+  l1.className = 't-line1';
+  l1.textContent = d.line1 || '';
+  body.appendChild(l1);
+  if (d.line2) {
+    const l2 = document.createElement('div');
+    l2.className = 't-line2';
+    l2.textContent = d.line2;
+    body.appendChild(l2);
+  }
+  toast.appendChild(body);
+  notifyEl.appendChild(toast);
+
+  setTimeout(() => {
+    toast.classList.add('leaving');
+    setTimeout(() => { toast.remove(); showNextNotify(); }, 500);
+  }, 5000);
+}
+
 // --- SSE transport ----------------------------------------------------------
 function connect() {
   const es = new EventSource('/overlay/events' + q);
@@ -217,6 +273,7 @@ function connect() {
   es.addEventListener('gamble', ev => renderGamble(JSON.parse(ev.data)));
   es.addEventListener('depth', ev => renderDepth(JSON.parse(ev.data)));
   es.addEventListener('wordle', ev => renderWordle(JSON.parse(ev.data)));
+  es.addEventListener('notify', ev => enqueueNotify(JSON.parse(ev.data)));
   // EventSource auto-reconnects on error; nothing to do.
 }
 connect();
