@@ -12,6 +12,8 @@ type fakeInfo struct {
 	live      bool
 	startedAt time.Time
 	followed  map[string]time.Time // userID -> followed_at
+	game      string               // ShoutoutInfo game
+	avatar    string               // ShoutoutInfo avatar url
 }
 
 func (f fakeInfo) StreamInfo(context.Context, string) (bool, time.Time, error) {
@@ -20,6 +22,9 @@ func (f fakeInfo) StreamInfo(context.Context, string) (bool, time.Time, error) {
 func (f fakeInfo) Followage(_ context.Context, _, userID string) (time.Time, bool, error) {
 	at, ok := f.followed[userID]
 	return at, ok, nil
+}
+func (f fakeInfo) ShoutoutInfo(context.Context, string) (string, string, error) {
+	return f.game, f.avatar, nil
 }
 
 // infoRouter is a router with only the Twitch info seam wired (no economy).

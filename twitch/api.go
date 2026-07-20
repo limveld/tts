@@ -33,11 +33,12 @@ type Redemption struct {
 }
 
 // User is one account from Get Users (used to resolve a login the bot hasn't
-// seen in chat yet, for !grant).
+// seen in chat yet, for !grant, and to fetch a profile picture for shoutouts).
 type User struct {
-	ID      string
-	Login   string
-	Display string
+	ID        string
+	Login     string
+	Display   string
+	AvatarURL string
 }
 
 // GetUsers resolves the given logins to accounts via Get Users. Unknown logins
@@ -50,11 +51,25 @@ func (c *Client) GetUsers(ctx context.Context, logins ...string) ([]User, error)
 	for _, l := range logins {
 		q.Add("login", l)
 	}
+	return c.getUsers(ctx, q)
+}
+
+// GetUserByID resolves a single account by user id. ok is false when no such id.
+func (c *Client) GetUserByID(ctx context.Context, id string) (User, bool, error) {
+	users, err := c.getUsers(ctx, url.Values{"id": {id}})
+	if err != nil || len(users) == 0 {
+		return User{}, false, err
+	}
+	return users[0], true, nil
+}
+
+func (c *Client) getUsers(ctx context.Context, q url.Values) ([]User, error) {
 	var out struct {
 		Data []struct {
 			ID          string `json:"id"`
 			Login       string `json:"login"`
 			DisplayName string `json:"display_name"`
+			AvatarURL   string `json:"profile_image_url"`
 		} `json:"data"`
 	}
 	if err := c.getJSON(ctx, c.helixBase+"/users?"+q.Encode(), &out); err != nil {
@@ -62,9 +77,33 @@ func (c *Client) GetUsers(ctx context.Context, logins ...string) ([]User, error)
 	}
 	users := make([]User, len(out.Data))
 	for i, d := range out.Data {
-		users[i] = User{ID: d.ID, Login: d.Login, Display: d.DisplayName}
+		users[i] = User{ID: d.ID, Login: d.Login, Display: d.DisplayName, AvatarURL: d.AvatarURL}
 	}
 	return users, nil
+}
+
+// GetChannelInfo returns broadcasterID's channel metadata — the game/category
+// last set on their channel is what a shoutout means by "last streaming". Needs
+// no special scope; empty fields when the channel has never been configured.
+func (c *Client) GetChannelInfo(ctx context.Context, broadcasterID string) (game, title, login, display string, err error) {
+	q := url.Values{}
+	q.Set("broadcaster_id", broadcasterID)
+	var out struct {
+		Data []struct {
+			GameName         string `json:"game_name"`
+			Title            string `json:"title"`
+			BroadcasterLogin string `json:"broadcaster_login"`
+			BroadcasterName  string `json:"broadcaster_name"`
+		} `json:"data"`
+	}
+	if err := c.getJSON(ctx, c.helixBase+"/channels?"+q.Encode(), &out); err != nil {
+		return "", "", "", "", err
+	}
+	if len(out.Data) == 0 {
+		return "", "", "", "", nil
+	}
+	d := out.Data[0]
+	return d.GameName, d.Title, d.BroadcasterLogin, d.BroadcasterName, nil
 }
 
 // getJSON performs an authenticated GET and decodes the body into v.

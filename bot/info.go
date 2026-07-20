@@ -19,6 +19,9 @@ import (
 type TwitchInfo interface {
 	StreamInfo(ctx context.Context, broadcasterID string) (live bool, startedAt time.Time, err error)
 	Followage(ctx context.Context, broadcasterID, userID string) (followedAt time.Time, ok bool, err error)
+	// ShoutoutInfo returns a user's last-streamed game and profile-picture URL for
+	// a shoutout (best-effort: either may be empty).
+	ShoutoutInfo(ctx context.Context, userID string) (game, avatar string, err error)
 }
 
 // twitchInfo adapts *twitch.Client to TwitchInfo.
@@ -29,6 +32,20 @@ func (t twitchInfo) StreamInfo(ctx context.Context, b string) (bool, time.Time, 
 }
 func (t twitchInfo) Followage(ctx context.Context, b, u string) (time.Time, bool, error) {
 	return t.client.Followage(ctx, b, u)
+}
+
+// ShoutoutInfo fetches the game (Get Channel Information) and avatar (Get Users)
+// in one call. Best-effort: a failure of either leaves that field empty; err is
+// the first error seen so the caller can log it but still shout.
+func (t twitchInfo) ShoutoutInfo(ctx context.Context, userID string) (game, avatar string, err error) {
+	g, _, _, _, gerr := t.client.GetChannelInfo(ctx, userID)
+	u, _, uerr := t.client.GetUserByID(ctx, userID)
+	if gerr != nil {
+		err = gerr
+	} else if uerr != nil {
+		err = uerr
+	}
+	return g, u.AvatarURL, err
 }
 
 // uptime replies with how long the stream has been live.

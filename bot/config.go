@@ -33,6 +33,9 @@ type Config struct {
 
 	Economy        EconomyConfig // marks economy settings (points.toml)
 	EconomyEnabled bool          // points.toml present → charge tts/sfx + run accrual/conversion
+
+	Notifications        NotificationsConfig // shoutouts + ad reminder (notifications.toml)
+	NotificationsEnabled bool                // notifications.toml present → run the events loop
 }
 
 // LoadConfig parses flags/env and an optional JSON config file (blocklist).
@@ -43,7 +46,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&c.Channel, "channel", "", "Twitch channel to join (required)")
 	fs.StringVar(&c.TTSURL, "tts-url", "http://127.0.0.1:8080", "TTS server base URL")
 	fs.StringVar(&c.TTSToken, "tts-token", os.Getenv("TTS_TOKEN"), "TTS server bearer token (env TTS_TOKEN)")
-	fs.DurationVar(&c.Cooldown, "cooldown", 30*time.Second, "per-user cooldown for !tts")
+	fs.DurationVar(&c.Cooldown, "cooldown", 1*time.Second, "per-user cooldown for !tts")
 	fs.IntVar(&c.MaxChars, "max-chars", 200, "max spoken characters")
 	fs.StringVar(&c.MinRole, "min-role", "everyone", "who can use !tts: everyone|sub|vip|mod")
 	fs.StringVar(&c.Cmds.TTSPrefix, "cmd-tts", "!tts", "TTS command prefix (voice code may follow: !ttsb)")
@@ -63,6 +66,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&timersPath, "timers-config", "timers.toml", "timers TOML ([[timer]] announcements); optional")
 	var pointsPath string
 	fs.StringVar(&pointsPath, "points-config", "points.toml", "marks economy TOML (accrual/costs/reward); optional")
+	var notifyPath string
+	fs.StringVar(&notifyPath, "notifications-config", "notifications.toml", "notifications TOML (shoutout allow-list + ad reminder); optional")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -115,6 +120,13 @@ func LoadConfig(args []string) (Config, error) {
 		return c, fmt.Errorf("points config: %w", err)
 	}
 	c.Economy, c.EconomyEnabled = econ, enabled
+
+	// Event notifications: opt-in via notifications.toml (missing = feature off).
+	notify, notifyEnabled, err := LoadNotificationsConfig(notifyPath)
+	if err != nil {
+		return c, fmt.Errorf("notifications config: %w", err)
+	}
+	c.Notifications, c.NotificationsEnabled = notify, notifyEnabled
 
 	// Chat is matched lowercased, so normalize command words.
 	c.Cmds.TTSPrefix = strings.ToLower(c.Cmds.TTSPrefix)

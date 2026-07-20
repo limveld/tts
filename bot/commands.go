@@ -22,6 +22,9 @@ func (r *Router) handleCommands(cmd, rest string, m ChatMessage) bool {
 		case "!followage":
 			r.followage(rest, m)
 			return true
+		case "!so":
+			r.soCommand(rest, m)
+			return true
 		}
 	}
 	if r.store == nil {
@@ -252,7 +255,7 @@ func (r *Router) reply(m ChatMessage, text string) {
 func (r *Router) isBuiltin(cmd string) bool {
 	switch cmd {
 	case r.cmds.SFX, r.cmds.Skip, r.cmds.Pause, r.cmds.Resume, r.cmds.Clear,
-		"!addcom", "!editcom", "!delcom", "!commands", "!voices", "!don",
+		"!addcom", "!editcom", "!delcom", "!commands", "!voices", "!don", "!so",
 		"!wordle", "!guess", "!wordlewins":
 		return true
 	}

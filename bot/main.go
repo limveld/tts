@@ -57,6 +57,15 @@ func main() {
 		router.info = twitchInfo{client: client}
 	}
 
+	// Shoutout allow-list (auto-shoutout on first message). !so works regardless.
+	if len(cfg.Notifications.Allow) > 0 {
+		router.shoutAllow = make(map[string]bool, len(cfg.Notifications.Allow))
+		for _, login := range cfg.Notifications.Allow {
+			router.shoutAllow[login] = true
+		}
+	}
+	router.shouted = make(map[string]bool)
+
 	// Seed the overlay with the persisted depth value so it renders on connect
 	// (the server caches the push and replays it to the browser source).
 	router.pushDepth(router.depthPoints())

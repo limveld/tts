@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"tts/store"
@@ -53,10 +54,21 @@ type Router struct {
 
 	wordleMu sync.Mutex   // guards wordle (mutated by handler + the clear timer)
 	wordle   *wordleState // the active Wordle round, or nil when idle
+
+	// Shoutouts: allow-listed logins auto-shouted on their first message each
+	// stream session (dedup in shouted, reset on going live by the events loop).
+	shoutAllow  map[string]bool // logins eligible for an auto-shoutout
+	sessionLive atomic.Bool     // whether the stream is currently live (set by events loop)
+	shoutMu     sync.Mutex      // guards shouted
+	shouted     map[string]bool // logins already shouted this session
 }
 
 // Handle processes one chat message.
 func (r *Router) Handle(m ChatMessage) {
+	// Auto-shoutout an allow-listed person on any message (their first this
+	// session), before the command handling below.
+	r.maybeShoutout(m)
+
 	// Remove emotes from the full message first (positions are relative to it),
 	// then work with the cleaned text.
 	text := strings.TrimSpace(removeEmotes(m.Text, m.Emotes))
