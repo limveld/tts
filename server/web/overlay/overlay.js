@@ -122,7 +122,7 @@ function depthTier(points) {
 }
 
 function depthFmt(n) {
-  return Math.min(n, 9999).toLocaleString('en-US'); // 9999 display cap, thousands separators
+  return Math.min(n, 9999); // 9999 display cap
 }
 
 function renderDepth(d) {

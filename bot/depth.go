@@ -76,7 +76,7 @@ func (r *Router) setDepth(rest string, m ChatMessage) {
 	}
 
 	r.pushDepth(next)
-	r.reply(m, fmt.Sprintf("Depth: %s (rank %d). PB %s.", comma(next), depthTier(next), comma(pb)))
+	r.reply(m, fmt.Sprintf("Depth: %d (rank %d). PB %d.", next, depthTier(next), pb))
 }
 
 // depthPoints reads the persisted depth total (0 when unset).

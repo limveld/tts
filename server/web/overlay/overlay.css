@@ -186,11 +186,10 @@ html, body {
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
 }
 #depth .d-pb {
-  font-family: var(--mono);
-  font-size: 18px;
+  font-family: var(--serif);
+  font-size: 30px;
   font-weight: 700;
   color: var(--gold);
-  opacity: 0.9;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
 }
 
