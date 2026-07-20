@@ -22,6 +22,8 @@ type TwitchInfo interface {
 	// ShoutoutInfo returns a user's last-streamed game and profile-picture URL for
 	// a shoutout (best-effort: either may be empty).
 	ShoutoutInfo(ctx context.Context, userID string) (game, avatar string, err error)
+	// AdSchedule returns when the next scheduled ad begins (zero time when none).
+	AdSchedule(ctx context.Context, broadcasterID string) (nextAd time.Time, err error)
 }
 
 // twitchInfo adapts *twitch.Client to TwitchInfo.
@@ -46,6 +48,10 @@ func (t twitchInfo) ShoutoutInfo(ctx context.Context, userID string) (game, avat
 		err = uerr
 	}
 	return g, u.AvatarURL, err
+}
+
+func (t twitchInfo) AdSchedule(ctx context.Context, b string) (time.Time, error) {
+	return t.client.AdSchedule(ctx, b)
 }
 
 // uptime replies with how long the stream has been live.

@@ -136,6 +136,20 @@ func main() {
 		logger.Printf("timers: %d configured", len(cfg.Timers))
 	}
 
+	// Event notifications: the loop tracks live state (resetting the shoutout
+	// session on going live) and, when the token carries channel:read:ads, warns
+	// ~1 min before scheduled ads. Needs a Twitch client for the Helix reads.
+	if cfg.NotificationsEnabled && client != nil {
+		ads := tokenHasScope(tok, "channel:read:ads")
+		events := NewEvents(router, roomIDOf, cfg.Notifications, ads, logger)
+		go events.Run(ctx)
+		logger.Printf("notifications: shoutouts=%d ad-reminders=%v (lead=%s poll=%s)",
+			len(cfg.Notifications.Allow), ads, cfg.Notifications.AdLead, cfg.Notifications.AdPoll)
+		if !ads {
+			logger.Printf("notifications: ad reminders disabled — re-authorize for channel:read:ads (run 'mise run bot:auth')")
+		}
+	}
+
 	irc := &IRCClient{channel: cfg.Channel, logger: logger, rnd: rnd, handle: handle}
 	logger.Printf("tts-bot: channel=#%s tts=%s cooldown=%s min-role=%s sfx=%d",
 		cfg.Channel, cfg.TTSURL, cfg.Cooldown, cfg.MinRole, len(cfg.SFX))
@@ -198,6 +212,19 @@ var economyScopes = []string{
 	"moderator:read:chatters",
 	"channel:read:redemptions",
 	"channel:manage:redemptions",
+}
+
+// tokenHasScope reports whether tok carries the given scope.
+func tokenHasScope(tok *twitch.Token, scope string) bool {
+	if tok == nil {
+		return false
+	}
+	for _, s := range tok.Scope {
+		if s == scope {
+			return true
+		}
+	}
+	return false
 }
 
 // hasEconomyScopes reports whether tok carries all economyScopes (so the bot was

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -181,6 +182,52 @@ func (c *Client) StreamInfo(ctx context.Context, broadcasterID string) (live boo
 func (c *Client) IsLive(ctx context.Context, broadcasterID string) (bool, error) {
 	live, _, err := c.StreamInfo(ctx, broadcasterID)
 	return live, err
+}
+
+// AdSchedule returns when broadcasterID's next scheduled ad begins (zero time
+// when none is scheduled). Needs the token scope channel:read:ads and a
+// broadcaster token. Used to warn viewers ~1 min ahead.
+func (c *Client) AdSchedule(ctx context.Context, broadcasterID string) (nextAd time.Time, err error) {
+	q := url.Values{}
+	q.Set("broadcaster_id", broadcasterID)
+	var out struct {
+		Data []struct {
+			NextAdAt json.RawMessage `json:"next_ad_at"`
+		} `json:"data"`
+	}
+	if err := c.getJSON(ctx, c.helixBase+"/channels/ads?"+q.Encode(), &out); err != nil {
+		return time.Time{}, err
+	}
+	if len(out.Data) == 0 {
+		return time.Time{}, nil
+	}
+	return parseAdTime(out.Data[0].NextAdAt), nil
+}
+
+// parseAdTime decodes Twitch's next_ad_at, which is an RFC3339 string in current
+// Helix but historically an integer unix timestamp; 0/empty/null ⇒ zero time
+// (no upcoming ad).
+func parseAdTime(raw json.RawMessage) time.Time {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "null" || s == "0" || s == `""` {
+		return time.Time{}
+	}
+	if s[0] == '"' {
+		var str string
+		if err := json.Unmarshal(raw, &str); err != nil || str == "" {
+			return time.Time{}
+		}
+		t, err := time.Parse(time.RFC3339, str)
+		if err != nil {
+			return time.Time{}
+		}
+		return t
+	}
+	var n int64
+	if err := json.Unmarshal(raw, &n); err == nil && n > 0 {
+		return time.Unix(n, 0)
+	}
+	return time.Time{}
 }
 
 // Followage returns when userID started following broadcasterID (for

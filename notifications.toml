@@ -1,0 +1,19 @@
+# Event notifications: shoutouts + ad reminder. Each fires a chat line plus a
+# transient bottom-left overlay toast (5s). This file being present ENABLES the
+# events loop (live-state tracking for shoutouts); ad reminders additionally need
+# the channel:read:ads scope — run `mise run bot:auth` to re-consent after adding
+# it. After editing: `mise run reload`.
+
+[shoutout]
+# Logins that get an automatic follow-shoutout on their FIRST chat message each
+# stream (once per stream session). Mods/broadcaster can also shout anyone with
+# `!so @user`. Leave empty for no auto-shoutouts (the !so command still works).
+allow = [
+  # "friendlystreamer",
+  # "anotherpal",
+]
+
+[ads]
+lead    = "60s"   # how far ahead of a scheduled ad to warn
+poll    = "30s"   # how often to poll the ad schedule / live state
+message = "📺 Heads up! Ads in about a minute — don't go anywhere, back soon ❤️"

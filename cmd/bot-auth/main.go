@@ -32,6 +32,7 @@ var scopes = []string{
 	"channel:read:redemptions",
 	"channel:manage:redemptions",
 	"moderator:read:followers", // !followage
+	"channel:read:ads",         // ad-break reminder
 }
 
 func main() {
