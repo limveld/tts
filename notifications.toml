@@ -9,8 +9,12 @@
 # stream (once per stream session). Mods/broadcaster can also shout anyone with
 # `!so @user`. Leave empty for no auto-shoutouts (the !so command still works).
 allow = [
-  # "friendlystreamer",
-  # "anotherpal",
+    "tall_sekiro",
+    "perfectmak",
+    "kristi_noems_puppy",
+    "kingego_",
+    "il4us",
+    "brandonkuhn1"
 ]
 
 [ads]

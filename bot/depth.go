@@ -47,7 +47,7 @@ func depthTier(points int64) int {
 // an exact value, clamped to [0, depthMaxPoints]. The PB auto-rises to match a
 // new high.
 func (r *Router) setDepth(rest string, m ChatMessage) {
-	if !(m.IsMod || m.IsBroadcaster) {
+	if !m.IsBroadcaster {
 		return
 	}
 	arg := strings.TrimSpace(rest)

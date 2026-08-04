@@ -112,6 +112,105 @@ url = "https://www.myinstants.com/media/sounds/joe-pesci-wtf-is-this-piece-of-sh
 
 [sounds.human]
 file = "human.mp3"
+
+[sounds.dying]
+file = "dying-soon.m4a"
+
+[sounds.money]
+file = "gimme-your-fking-money.mp3"
+
+[sounds.godhelp]
+file = "god-help-me.mp3"
+
+[sounds.pickup]
+file = "pick-us-up.mp3"
+
+[sounds.stewie]
+file = "stewie.mp3"
+
+[sounds.hellnah]
+file = "angry-grandpa-hell-nah.mp3"
+
+[sounds.worry]
+file = "worry.mp3"
+
+[sounds.ambitions]
+file = "ambitions.mp3"
+
+[sounds.beggars]
+file = "beggars.mp3"
+
+[sounds.believe]
+file = "beginning-to-believe.mp3"
+
+[sounds.eww]
+file = "brother-ewwwwwww.mp3"
+
+[sounds.coward]
+file = "coward.m4a"
+
+[sounds.foul]
+file = "foul.mp3"
+
+[sounds.gambling]
+file = "gambling.mp3"
+
+[sounds.graceless]
+file = "graceless.mp3"
+
+[sounds.gta]
+file = "gta-san-andreas-ah-shit-here-we-go-again.mp3"
+
+[sounds.maiden]
+file = "maiden.mp3"
+
+[sounds.mike]
+file = "michael-dont-leave-me-here.mp3"
+
+[sounds.donttouch]
+file = "rick-and-morty-dont-touch-it.mp3"
+
+[sounds.roberto]
+file = "roberto.mp3"
+
+[sounds.running]
+file = "why-are-you-running.mp3"
+
+[[sounds.today.clips]]
+file = "today1.mp3"
+
+[[sounds.today.clips]]
+file = "today2.mp3"
+
+[[sounds.today.clips]]
+file = "today3.mp3"
+
+[[sounds.today.clips]]
+file = "today4.mp3"
+
+[[sounds.today.clips]]
+file = "today5.mp3"
+
+[[sounds.today.clips]]
+file = "today6.mp3"
+
+[sounds.do]
+file = "dew-it.mp3"
+
+[[sounds.dih.clips]]
+file = "dih1.mp3"
+
+[[sounds.dih.clips]]
+file = "dih2.mp3"
+
+[[sounds.dih.clips]]
+file = "dih3.mp3"
+
+[[sounds.dih.clips]]
+file = "dih4.mp3"
+
+[[sounds.dih.clips]]
+file = "dih5.mp3"
 volume = 10
 
 [sounds.peace]
