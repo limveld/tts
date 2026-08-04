@@ -48,7 +48,7 @@ type Overlay struct {
 // stateKinds are the render kinds accepted by POST /overlay/state that are cached
 // and replayed on reconnect. Audio and the transient "notify" toast are not state
 // kinds — they're shown once and never replayed.
-var stateKinds = map[string]bool{"gamble": true, "depth": true, "wordle": true}
+var stateKinds = map[string]bool{"gamble": true, "depth": true, "wordle": true, "connections": true}
 
 // NewOverlay builds the hub. tmpDir is where the queue writes tts-<id>.wav files.
 func NewOverlay(tmpDir, token string, logger *log.Logger) *Overlay {

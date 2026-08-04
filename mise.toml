@@ -67,6 +67,12 @@ run = "bash deploy/service.sh server logs"
 description = "Download soundboard clips declared in sfx.toml into sfx/ (idempotent)"
 run = "go run ./cmd/sfx-fetch"
 
+# ---- connections ------------------------------------------------------------
+
+[tasks."connections:sync"]
+description = "Download the latest NYT Connections puzzle corpus to connections.json (restart the bot to apply)"
+run = "go run ./cmd/connections-fetch"
+
 # ---- bot -------------------------------------------------------------------
 
 [tasks."bot:build"]

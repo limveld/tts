@@ -55,6 +55,14 @@ type Router struct {
 	wordleMu sync.Mutex   // guards wordle (mutated by handler + the clear timer)
 	wordle   *wordleState // the active Wordle round, or nil when idle
 
+	// One board game (Wordle or Connections) holds the center stage at a time.
+	boardMu sync.Mutex // guards board
+	board   boardKind  // which board game is live, or boardNone
+
+	connMu      sync.Mutex        // guards conn (mutated by handler + expire/clear timers)
+	conn        *connectionsState // the active Connections round, or nil when idle
+	connPuzzles []connPuzzle      // the loaded puzzle bank (nil until loadConnections)
+
 	// Shoutouts: allow-listed logins auto-shouted on their first message each
 	// stream session (dedup in shouted, reset on going live by the events loop).
 	shoutAllow  map[string]bool // logins eligible for an auto-shoutout

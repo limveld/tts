@@ -30,7 +30,7 @@ html, body {
 #top-right {
   position: absolute;
   top: 40px;
-  right: 40px;
+  right: 24px;
   left: auto;
   display: flex;
   flex-direction: column;
@@ -47,7 +47,7 @@ html, body {
 .panel[hidden] { display: none; }
 /* Id-scoped so this wins over #wordle/#gamble { display: flex } on specificity —
    otherwise a hidden, emptied panel keeps rendering as an empty box. */
-#wordle[hidden], #gamble[hidden] { display: none; }
+#wordle[hidden], #gamble[hidden], #connections[hidden] { display: none; }
 
 /* --- wordle board --------------------------------------------------------- */
 #wordle {
@@ -134,6 +134,127 @@ html, body {
   color: var(--gold);
 }
 #wordle .w-banner.lost { color: #b04a4a; }
+
+/* --- connections board ---------------------------------------------------- */
+#connections {
+  /* NYT category colors, level 0..3 (~90% alpha so bars pass a little stream). */
+  --c-yellow: rgba(249, 223, 109, 0.9);
+  --c-green:  rgba(160, 195, 90, 0.9);
+  --c-blue:   rgba(176, 196, 239, 0.9);
+  --c-purple: rgba(186, 129, 197, 0.9);
+  /* Box-less and frosted, like the Wordle board: the panel itself has no
+     background — tiles/bars float over the stream. */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 500px;
+}
+#connections .cn-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 20px;
+}
+#connections .cn-countdown {
+  font-family: var(--mono);
+  font-size: 16px;
+  letter-spacing: 2px;
+  color: var(--gold);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+#connections .cn-dots { margin-left: auto; display: flex; gap: 6px; }
+#connections .cn-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--gold);
+}
+#connections .cn-dot.used { background: transparent; border: 2px solid #565758; }
+
+/* solved / revealed category bars */
+#connections .cn-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: #121213;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+#connections .cn-bar.c-yellow { background: var(--c-yellow); }
+#connections .cn-bar.c-green  { background: var(--c-green); }
+#connections .cn-bar.c-blue   { background: var(--c-blue); }
+#connections .cn-bar.c-purple { background: var(--c-purple); }
+#connections .cn-bar.cn-revealed { opacity: 0.72; } /* exposed on a loss, not solved */
+#connections .cn-bar-new { animation: cnBarDrop 0.5s ease; }
+@keyframes cnBarDrop { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+#connections .cn-name {
+  font-family: var(--serif); /* Cinzel — keeps the overlay's title identity */
+  font-weight: 700;
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+#connections .cn-words {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+/* remaining tiles: 4-wide numbered grid */
+#connections .cn-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+/* Frosted keyboard-key look: the Wordle key grey (#818384) made see-through,
+   with a backdrop blur so the stream shows through but stays soft behind text. */
+#connections .cn-tile {
+  position: relative;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(129, 131, 132, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+#connections .cn-num {
+  position: absolute;
+  top: 3px;
+  left: 5px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gold);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+#connections .cn-word {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 15px;
+  text-transform: uppercase;
+  text-align: center;
+  padding: 0 4px;
+  line-height: 1.05;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+#connections .cn-banner {
+  margin-top: 4px;
+  text-align: center;
+  font-family: var(--serif);
+  font-size: 18px;
+  color: var(--gold);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+#connections .cn-banner.lost { color: #b04a4a; }
 
 /* --- gamble panel (compact, one line) ------------------------------------- */
 #gamble {

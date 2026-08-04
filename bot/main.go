@@ -71,6 +71,8 @@ func main() {
 	router.pushDepth(router.depthPoints())
 	// Restore an in-progress Wordle round (survives a bot restart).
 	router.loadWordle()
+	// Load the Connections puzzle bank and restore an in-progress round.
+	router.loadConnections(cfg.ConnectionsFile)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

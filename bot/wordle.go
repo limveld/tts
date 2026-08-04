@@ -133,6 +133,11 @@ func (r *Router) startWordle(m ChatMessage) {
 	if len(wordleAnswers) == 0 {
 		return
 	}
+	// Claim the shared stage; refuse if the other board game (Connections) owns it.
+	if ok, live := r.claimBoard(boardWordle); !ok {
+		r.reply(m, boardBusyMsg(live))
+		return
+	}
 	r.wordleMu.Lock()
 	if r.wordle != nil && !r.wordle.Done {
 		r.wordleMu.Unlock()
@@ -232,6 +237,23 @@ func (r *Router) expireWordle(st *wordleState) {
 	r.scheduleWordleClear(st)
 }
 
+// forceEndWordle clears the current round immediately (mod !skipgame) and frees
+// the stage right away — no reveal, no linger — so another game can start at once.
+// (The graceful "show the word" ending is what a natural loss/expiry does.)
+func (r *Router) forceEndWordle() {
+	r.wordleMu.Lock()
+	st := r.wordle
+	r.wordle = nil
+	r.clearWordlePersist()
+	r.wordleMu.Unlock()
+
+	r.releaseBoard(boardWordle)
+	r.pushWordleHidden()
+	if st != nil && r.chat != nil {
+		r.chat.Send(st.RoomID, "🛑 Wordle skipped. !wordle to play again.")
+	}
+}
+
 // awardWordle grants the solver marks (when the economy is on) and bumps their
 // win tally, then announces it.
 func (r *Router) awardWordle(m ChatMessage, tries int) {
@@ -263,6 +285,7 @@ func (r *Router) scheduleWordleClear(done *wordleState) {
 		r.wordle = nil
 		r.clearWordlePersist()
 		r.wordleMu.Unlock()
+		r.releaseBoard(boardWordle) // free the stage for another game
 		r.pushWordleHidden()
 	})
 }

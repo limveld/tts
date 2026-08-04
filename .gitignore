@@ -14,7 +14,15 @@ mise.local.toml
 # Bot OAuth tokens (secret/state written by `mise run bot:auth`).
 /bot.tokens.json
 
+# Refreshed Connections corpus (`mise run connections:sync`); the bot embeds a
+# seed copy, so this runtime override is optional and not committed.
+/connections.json
+/connections.json.part
+
 # Bot SQLite database (custom commands, points) + WAL sidecars.
 /bot.db
 /bot.db-shm
 /bot.db-wal
+
+debug/
+raw/

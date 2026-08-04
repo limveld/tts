@@ -86,7 +86,7 @@ func TestListCommandsAndVoices(t *testing.T) {
 	st.Add(store.Command{Name: "socials", Response: "y"})
 
 	r.Handle(msg("bob", "!commands", false))
-	if lastReply(chat) != "Commands: !tts, !sfx, !voices, !wordle, !guess, !wordlewins, !discord, !socials" {
+	if lastReply(chat) != "Commands: !tts, !sfx, !voices, !wordle, !guess, !wordlewins, !connections, !group, !connectionswins, !discord, !socials" {
 		t.Errorf("!commands reply=%q", lastReply(chat))
 	}
 	r.Handle(msg("bob", "!voices", false))

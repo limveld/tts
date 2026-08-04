@@ -33,6 +33,11 @@ type EconomyConfig struct {
 	GambleDuration time.Duration // how long an open !g round accepts joins
 	WordleReward   int64         // marks awarded to a Wordle solver
 	WordleDuration time.Duration // how long a Wordle round runs before it auto-ends
+	// Connections: each correct group pays ConnectionsGroupReward × (level+1)
+	// (so purple pays 4× yellow); landing the final group adds ConnectionsSolveBonus.
+	ConnectionsGroupReward int64
+	ConnectionsSolveBonus  int64
+	ConnectionsDuration    time.Duration // how long a Connections round runs before it auto-ends
 }
 
 // LoadEconomyConfig parses points.toml. A missing file is not an error — it just
@@ -57,6 +62,9 @@ func LoadEconomyConfig(path string) (cfg EconomyConfig, enabled bool, err error)
 		GambleDuration  string `toml:"gamble_duration"`
 		WordleReward    int64  `toml:"wordle_reward"`
 		WordleDuration  string `toml:"wordle_duration"`
+		ConnGroupReward int64  `toml:"connections_group_reward"`
+		ConnSolveBonus  int64  `toml:"connections_solve_bonus"`
+		ConnDuration    string `toml:"connections_duration"`
 	}
 	if _, err := toml.DecodeFile(path, &doc); err != nil {
 		return EconomyConfig{}, false, err
@@ -78,6 +86,10 @@ func LoadEconomyConfig(path string) (cfg EconomyConfig, enabled bool, err error)
 	if err != nil {
 		return EconomyConfig{}, false, fmt.Errorf("wordle_duration: %w", err)
 	}
+	connDur, err := durationOr(doc.ConnDuration, 3*time.Minute)
+	if err != nil {
+		return EconomyConfig{}, false, fmt.Errorf("connections_duration: %w", err)
+	}
 
 	cfg = EconomyConfig{
 		CurrencyName:    orString(doc.CurrencyName, "marks"),
@@ -94,6 +106,10 @@ func LoadEconomyConfig(path string) (cfg EconomyConfig, enabled bool, err error)
 		GambleDuration:  gambleDur,
 		WordleReward:    orInt64(doc.WordleReward, 100),
 		WordleDuration:  wordleDur,
+
+		ConnectionsGroupReward: orInt64(doc.ConnGroupReward, 25),
+		ConnectionsSolveBonus:  orInt64(doc.ConnSolveBonus, 100),
+		ConnectionsDuration:    connDur,
 	}
 	return cfg, true, nil
 }

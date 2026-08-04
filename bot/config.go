@@ -28,7 +28,9 @@ type Config struct {
 	TwitchSecret   string
 	TokenStore     string
 
-	DBPath string        // SQLite database for custom commands (Stage 2+)
+	DBPath          string // SQLite database for custom commands (Stage 2+)
+	ConnectionsFile string // optional refreshed Connections corpus (falls back to embedded seed)
+
 	Timers []TimerConfig // interval announcements
 
 	Economy        EconomyConfig // marks economy settings (points.toml)
@@ -62,6 +64,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&c.TwitchSecret, "twitch-client-secret", os.Getenv("TWITCH_CLIENT_SECRET"), "Twitch app client secret (env TWITCH_CLIENT_SECRET)")
 	fs.StringVar(&c.TokenStore, "twitch-token-store", "bot.tokens.json", "path to the OAuth token store written by bot-auth")
 	fs.StringVar(&c.DBPath, "db", "bot.db", "SQLite database for custom commands")
+	fs.StringVar(&c.ConnectionsFile, "connections-file", "connections.json", "refreshed Connections corpus from 'mise run connections:sync' (falls back to the embedded seed)")
 	var timersPath string
 	fs.StringVar(&timersPath, "timers-config", "timers.toml", "timers TOML ([[timer]] announcements); optional")
 	var pointsPath string

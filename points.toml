@@ -29,13 +29,13 @@ accrual_interval = "1m"   # Go duration: 30s, 1m, 5m
 accrual_rate     = 1      # marks per interval per present viewer
 
 # Spend costs.
-tts_cost = 1
-sfx_cost = 1
+tts_cost = 10
+sfx_cost = 10
 
 # Channel-Point → marks conversion reward (the bot creates/manages it).
 reward_title  = "Convert to Marks"
 reward_cost   = 100                       # channel points per redemption
-reward_grant  = 10                        # marks granted per redemption
+reward_grant  = 100                        # marks granted per redemption
 reward_prompt = "Convert channel points into marks for !tts and !sfx."
 poll_interval = "30s"                      # how often to check for redemptions
 
@@ -51,3 +51,14 @@ gamble_duration = "60s"    # how long an open round accepts joins
 # after `wordle_duration` if unsolved (the word is revealed).
 wordle_reward   = 100      # marks awarded to a Wordle solver
 wordle_duration = "3m"     # how long a round runs before it auto-ends
+
+# Connections: anyone starts a 4x4 board with !connections (or !conn), then chat
+# submits groups of four by tile number, e.g. !group 1 5 9 12 (first valid group
+# wins it). Each correct group pays its solver `connections_group_reward` × the
+# group's difficulty (yellow ×1 … purple ×4); whoever lands the final 4th group
+# also gets `connections_solve_bonus` and a win on the !connectionswins
+# leaderboard. Four shared mistakes or `connections_duration` elapsing ends the
+# round (remaining groups are revealed). Mods: !skipgame, !reveal, !shuffle.
+connections_group_reward = 25   # base marks per solved group (scaled ×(level+1))
+connections_solve_bonus  = 100  # extra marks to whoever completes the puzzle
+connections_duration     = "10m" # how long a round runs before it auto-ends

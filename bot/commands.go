@@ -43,6 +43,24 @@ func (r *Router) handleCommands(cmd, rest string, m ChatMessage) bool {
 	case "!wordlewins":
 		r.showWordleWins(m)
 		return true
+	case "!connections", "!conn":
+		r.startConnections(m)
+		return true
+	case "!group":
+		r.submitGroup(rest, m)
+		return true
+	case "!connectionswins":
+		r.showConnectionsWins(m)
+		return true
+	case "!skipgame":
+		r.skipGame(m)
+		return true
+	case "!reveal":
+		r.revealConnections(m)
+		return true
+	case "!shuffle":
+		r.shuffleConnections(m)
+		return true
 	case "!addcom", "!editcom", "!delcom":
 		if m.IsMod || m.IsBroadcaster {
 			r.adminCommand(cmd, rest, m)
@@ -198,7 +216,8 @@ func (r *Router) listCommands(m ChatMessage) {
 		return
 	}
 	// Public built-ins, gated on the same flags used to dispatch them.
-	cmds := []string{r.cmds.TTSPrefix, r.cmds.SFX, "!voices", "!wordle", "!guess", "!wordlewins"}
+	cmds := []string{r.cmds.TTSPrefix, r.cmds.SFX, "!voices", "!wordle", "!guess", "!wordlewins",
+		"!connections", "!group", "!connectionswins"}
 	if r.economy {
 		cmds = append(cmds, "!marks", "!leaderboard", "!g", "!give")
 	}
@@ -256,7 +275,8 @@ func (r *Router) isBuiltin(cmd string) bool {
 	switch cmd {
 	case r.cmds.SFX, r.cmds.Skip, r.cmds.Pause, r.cmds.Resume, r.cmds.Clear,
 		"!addcom", "!editcom", "!delcom", "!commands", "!voices", "!don", "!r", "!so",
-		"!wordle", "!guess", "!wordlewins":
+		"!wordle", "!guess", "!wordlewins",
+		"!connections", "!conn", "!group", "!connectionswins", "!skipgame", "!reveal", "!shuffle":
 		return true
 	}
 	if r.info != nil && (cmd == "!uptime" || cmd == "!followage") {

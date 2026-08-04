@@ -80,6 +80,14 @@ func Open(path string) (*Store, error) {
 			display TEXT NOT NULL,
 			wins    INTEGER NOT NULL DEFAULT 0
 		)`,
+		// Connections completion tally (one row per player who landed the final
+		// group of a puzzle). See store/connections.go.
+		`CREATE TABLE IF NOT EXISTS connections_wins (
+			user_id TEXT PRIMARY KEY,
+			login   TEXT NOT NULL,
+			display TEXT NOT NULL,
+			wins    INTEGER NOT NULL DEFAULT 0
+		)`,
 	}
 	for _, stmt := range schema {
 		if _, err := db.Exec(stmt); err != nil {

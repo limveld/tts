@@ -1,6 +1,6 @@
 // Full-screen stream overlay. Renders purely from the server's SSE stream
 // (/overlay/events); it holds no game state of its own and never connects to
-// Twitch. Events: play/stop (audio) + gamble/depth/wordle (added in later stages).
+// Twitch. Events: play/stop (audio) + gamble/depth/wordle/connections.
 
 // Carry any ?token= from this page's URL onto the API calls (a Browser Source
 // can't set headers, so the server accepts the token as a query param).
@@ -214,6 +214,81 @@ function renderWordle(d) {
   }
 }
 
+// --- connections ------------------------------------------------------------
+// Renders {tiles:[{num,word}], solved:[{name,level,words,revealed}], mistakes,
+// max, done, won, endsAt?} as an NYT-style board: solved groups collapse into
+// colored category bars above a shrinking 4x4 numbered grid. {hidden:true} clears
+// it. The payload never carries the grouping of unsolved tiles, so the answer
+// can't leak mid-round.
+const connEl = document.getElementById('connections');
+const CONN_COLORS = ['c-yellow', 'c-green', 'c-blue', 'c-purple']; // level 0..3
+let connCountdown = null;
+let connPrevSolved = 0; // solved bars shown last render, to animate a fresh one
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => (
+    {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]
+  ));
+}
+
+function renderConnections(d) {
+  if (connCountdown) { clearInterval(connCountdown); connCountdown = null; }
+
+  if (!d || d.hidden) {
+    connEl.hidden = true; connEl.innerHTML = ''; connPrevSolved = 0; return;
+  }
+  const solved = d.solved || [];
+  const tiles = d.tiles || [];
+  const max = d.max || 4;
+  const mistakes = d.mistakes || 0;
+  // Animate only a just-solved group (bars grew by exactly one since last render).
+  const newBar = solved.length === connPrevSolved + 1 ? solved.length - 1 : -1;
+  connPrevSolved = solved.length;
+
+  // header: countdown (live only) + mistake dots
+  let dots = '';
+  for (let i = 0; i < max; i++) dots += '<span class="cn-dot' + (i < max - mistakes ? '' : ' used') + '"></span>';
+  let head = '<div class="cn-head">';
+  if (!d.done && d.endsAt) head += '<span class="cn-countdown" id="cn-countdown"></span>';
+  head += '<span class="cn-dots">' + dots + '</span></div>';
+
+  // solved (and, when done, revealed) groups as colored bars
+  let bars = '';
+  for (let i = 0; i < solved.length; i++) {
+    const g = solved[i];
+    const cls = CONN_COLORS[g.level % 4] + (i === newBar ? ' cn-bar-new' : '') + (g.revealed ? ' cn-revealed' : '');
+    bars += '<div class="cn-bar ' + cls + '">' +
+      '<span class="cn-name">' + escHtml(g.name) + '</span>' +
+      '<span class="cn-words">' + (g.words || []).map(escHtml).join(' · ') + '</span></div>';
+  }
+
+  // remaining tiles as a numbered grid, in display order
+  let grid = '<div class="cn-grid">';
+  for (const t of tiles) {
+    grid += '<div class="cn-tile"><span class="cn-num">' + t.num + '</span>' +
+      '<span class="cn-word">' + escHtml(t.word) + '</span></div>';
+  }
+  grid += '</div>';
+
+  let banner = '';
+  if (d.done) {
+    banner = d.won
+      ? '<div class="cn-banner">SOLVED</div>'
+      : '<div class="cn-banner lost">BUSTED</div>';
+  }
+
+  connEl.hidden = false;
+  connEl.innerHTML = head + bars + grid + banner;
+
+  // drive the countdown by updating only the text (no re-render / re-animate).
+  if (!d.done && d.endsAt) {
+    const cd = document.getElementById('cn-countdown');
+    const tick = () => { cd.textContent = '⏱ ' + fmtCountdown(d.endsAt - Date.now()); };
+    tick();
+    connCountdown = setInterval(tick, 250);
+  }
+}
+
 // --- notification toasts (bottom-left) --------------------------------------
 // Transient {kind:"shoutout"|"ad", line1, line2?, avatar?}. Shown one at a time
 // (slide-in, hold 5s, fade out); queued so bursts don't overlap. Built via DOM
@@ -278,6 +353,7 @@ function connect() {
   es.addEventListener('gamble', ev => renderGamble(JSON.parse(ev.data)));
   es.addEventListener('depth', ev => renderDepth(JSON.parse(ev.data)));
   es.addEventListener('wordle', ev => renderWordle(JSON.parse(ev.data)));
+  es.addEventListener('connections', ev => renderConnections(JSON.parse(ev.data)));
   es.addEventListener('notify', ev => enqueueNotify(JSON.parse(ev.data)));
   // EventSource auto-reconnects on error; nothing to do.
 }
