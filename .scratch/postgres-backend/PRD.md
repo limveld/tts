@@ -1,6 +1,7 @@
 # PRD: Postgres backend for the bot
 
-Status: ready-for-agent — phase 1 (local cutover), 10 issues
+Status: in progress — issues 01–09 shipped (2026-08-10); [10](issues/10-production-cutover.md) is
+ready-for-human (the live cutover needs an offline stream and chat smoke tests)
 Type: prd
 Created: 2026-08-10
 
