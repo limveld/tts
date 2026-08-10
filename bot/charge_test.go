@@ -2,24 +2,17 @@ package main
 
 import (
 	"math/rand"
-	"path/filepath"
 	"testing"
 	"time"
-
-	"tts/store/sqlite"
 )
 
 // econRouter builds a test router with the marks economy enabled (tts=10, sfx=5)
 // backed by a temp store, plus a fake chat for refusal replies.
-func econRouter(t *testing.T) (*Router, *fakeTTS, *sqlite.Store, *fakeChat) {
+func econRouter(t *testing.T) (*Router, *fakeTTS, Store, *fakeChat) {
 	t.Helper()
 	f := &fakeTTS{}
 	r := newTestRouter(f)
-	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := newTestStore(t)
 	chat := &fakeChat{}
 	r.store = st
 	r.chat = chat

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"tts/store/sqlite"
 	"tts/twitch"
 )
 
@@ -45,13 +44,9 @@ func (f *fakeAPI) FulfillRedemptions(_ context.Context, _, _ string, ids []strin
 	return nil
 }
 
-func testEconomy(t *testing.T, api TwitchAPI) (*Economy, *sqlite.Store) {
+func testEconomy(t *testing.T, api TwitchAPI) (*Economy, Store) {
 	t.Helper()
-	st, err := sqlite.Open(filepath.Join(t.TempDir(), "e.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := newTestStore(t)
 	cfg := EconomyConfig{
 		CurrencyName: "marks", AccrualRate: 1, RewardTitle: "Convert to Marks",
 		RewardCost: 1000, RewardGrant: 500,

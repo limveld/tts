@@ -4,20 +4,14 @@ import (
 	"io"
 	"log"
 	"math/rand"
-	"path/filepath"
 	"testing"
 
 	"tts/store"
-	"tts/store/sqlite"
 )
 
-func newCmdRouter(t *testing.T, tts TTS, chat Chat) (*Router, *sqlite.Store) {
+func newCmdRouter(t *testing.T, tts TTS, chat Chat) (*Router, Store) {
 	t.Helper()
-	st, err := sqlite.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
+	st := newTestStore(t)
 	r := &Router{
 		cmds:     Commands{TTSPrefix: "!tts", Skip: "!skip", Pause: "!pause", Resume: "!resume", Clear: "!clear", SFX: "!sfx"},
 		minRole:  "everyone",

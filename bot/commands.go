@@ -9,6 +9,18 @@ import (
 	"tts/store"
 )
 
+// CommandStore is the slice of the store that chat-managed custom commands need
+// (an interface so tests can substitute a fake). *sqlite.Store and
+// *postgres.Store satisfy it.
+type CommandStore interface {
+	Get(name string) (store.Command, bool, error)
+	Add(c store.Command) (created bool, err error)
+	SetResponse(name, response string) (found bool, err error)
+	Delete(name string) (found bool, err error)
+	List() ([]string, error)
+	IncCount(name string) error
+}
+
 // handleCommands dispatches the admin CRUD words, the dynamic !commands/!voices
 // built-ins, and custom stored commands. It returns true if it handled cmd (so
 // Handle stops), false to fall through to the TTS branch.

@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"tts/store/sqlite"
 )
 
 // testConnPuzzle has four groups of four, all words distinct across groups so
@@ -20,7 +18,7 @@ var testConnPuzzle = connPuzzle{ID: 1, Groups: []connGroup{
 
 // connRouter is an econRouter primed with the Connections economy config, a fake
 // overlay, and the single test puzzle so starts are deterministic.
-func connRouter(t *testing.T) (*Router, *sqlite.Store, *fakeChat, *fakeOverlay) {
+func connRouter(t *testing.T) (*Router, Store, *fakeChat, *fakeOverlay) {
 	t.Helper()
 	r, _, st, chat := econRouter(t)
 	r.econ.ConnectionsGroupReward = 10

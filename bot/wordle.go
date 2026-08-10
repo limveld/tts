@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"tts/store"
 )
 
 // Chat-plays Wordle, bot-owned. One shared 6-row board per round: anyone opens a
@@ -15,6 +17,15 @@ import (
 // the board and pushes it to the overlay, which renders the familiar
 // tiles/keyboard. Rendering is ported from raw/wordle-chat-overlay.html; the game
 // logic lives here (the prototype's per-viewer voting is dropped by design).
+
+// WordleWins is the win-tally slice of the store the Wordle game needs (an
+// interface so tests can substitute a fake). The board itself is not in here:
+// it's persisted as an opaque round document. *sqlite.Store and *postgres.Store
+// satisfy it.
+type WordleWins interface {
+	WordleAddWin(userID, login, display string) (wins int, err error)
+	WordleLeaderboard(n int) ([]store.WordleWin, error)
+}
 
 //go:embed wordle_answers.txt
 var wordleAnswersRaw string

@@ -10,7 +10,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"tts/store/sqlite"
+	"tts/store"
 	"tts/twitch"
 )
 
@@ -150,12 +150,30 @@ type TwitchAPI interface {
 	FulfillRedemptions(ctx context.Context, broadcasterID, rewardID string, ids []string) error
 }
 
+// Ledger is the marks economy's slice of the store: identity plus the
+// append-only ledger every accrual, spend, gamble and transfer writes to (an
+// interface so tests can substitute a fake). *sqlite.Store and *postgres.Store
+// satisfy it.
+//
+// The economy runner needs the ledger and nothing else — no commands, no
+// settings, no game tallies — and this is what makes that visible.
+type Ledger interface {
+	UpsertUser(userID, login, display string) error
+	ResolveLogin(login string) (userID string, ok bool, err error)
+	Balance(userID string) (int64, error)
+	Credit(userID string, amount int64, reason, ref string) (credited bool, err error)
+	Grant(userID string, delta int64, reason string) (newBal int64, err error)
+	Spend(userID string, amount int64, reason string) (ok bool, err error)
+	Transfer(fromID, toID string, amount int64, reason string) (ok bool, err error)
+	Leaderboard(n int) ([]store.LedgerEntry, error)
+}
+
 // Economy runs the two earning loops: watch-time accrual (live-gated Get
 // Chatters) and Channel-Point→marks conversion (poll a bot-managed reward).
 // roomID returns the channel's broadcaster id (the numeric room-id from chat
 // tags), "" until a message has been seen.
 type Economy struct {
-	store  *sqlite.Store
+	store  Ledger
 	api    TwitchAPI
 	cfg    EconomyConfig
 	roomID func() string
@@ -165,7 +183,7 @@ type Economy struct {
 	convDisabled bool   // set if the channel can't have channel points
 }
 
-func NewEconomy(st *sqlite.Store, api TwitchAPI, cfg EconomyConfig, roomID func() string, logger *log.Logger) *Economy {
+func NewEconomy(st Ledger, api TwitchAPI, cfg EconomyConfig, roomID func() string, logger *log.Logger) *Economy {
 	return &Economy{store: st, api: api, cfg: cfg, roomID: roomID, logger: logger}
 }
 

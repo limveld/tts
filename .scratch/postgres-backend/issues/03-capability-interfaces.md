@@ -1,6 +1,6 @@
 # Capability interfaces at the consumer + openStore factory
 
-Status: ready-for-agent
+Status: done (2026-08-10)
 Type: task
 Created: 2026-08-10
 
@@ -92,3 +92,25 @@ bot/store.go        Store = all of the above + Close() error
   `bot/admin.go` (`UserResolver`), `bot/info.go` (`TwitchInfo`), `bot/chat.go` (`Chat`)
 - Fields being retyped: `bot/router.go:38`, `bot/economy.go:158`
 - Nil-guard pattern that must keep working: every `if r.store == nil { return }` in `bot/`
+
+## Comments
+
+**2026-08-10 — shipped.**
+
+Five interfaces landed at their consumers (`CommandStore` in `commands.go`, `Ledger` in
+`economy.go`, `SettingStore` in `store.go`, `WordleWins` in `wordle.go`, `ConnectionsWins` in
+`connections.go`), plus the composite `Store`, `openStore(dsn)` and
+`var _ Store = (*sqlite.Store)(nil)` in the new `bot/store.go`. `RoundStore` waits for issue 05, so
+the composite gains its sixth embed there.
+
+The empty-call-site-diff check passes: `git diff` over the whole issue shows no changed line
+containing `r.store.` or `e.store.`. The only test-body lines that moved are the three
+`t.Cleanup(func() { st.Close() })` calls now living inside `newTestStore`.
+
+Two notes for whoever reads this next:
+
+- `bot/router.go` and `bot/economy.go` dropped their `tts/store/sqlite` import entirely — their
+  remaining `store.` occurrences were always the *field*, never the package.
+- `TestGamblePayoutErrorKeepsRoundPersisted` still calls `sqlite.Open(dbPath)` directly rather than
+  `newTestStore`. It closes the store to make every call fail and then reopens the same path, so it
+  genuinely depends on a durable file — routing it through the helper would delete the test.

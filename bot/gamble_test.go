@@ -237,7 +237,7 @@ func crashGamble(r *Router, remaining time.Duration) {
 
 // rebootRouter builds a fresh router over an existing store: same durable ledger
 // and settings, brand-new in-memory state. This is the bot coming back up.
-func rebootRouter(t *testing.T, st *sqlite.Store) (*Router, *fakeChat, *fakeOverlay) {
+func rebootRouter(t *testing.T, st Store) (*Router, *fakeChat, *fakeOverlay) {
 	t.Helper()
 	r, _, _, chat := econRouter(t)
 	r.store = st
@@ -247,7 +247,7 @@ func rebootRouter(t *testing.T, st *sqlite.Store) (*Router, *fakeChat, *fakeOver
 }
 
 // persistedRound decodes the stored round, or reports that none is stored.
-func persistedRound(t *testing.T, st *sqlite.Store) (gambleRec, bool) {
+func persistedRound(t *testing.T, st Store) (gambleRec, bool) {
 	t.Helper()
 	v, ok, err := st.GetSetting(gambleSettingKey)
 	if err != nil {

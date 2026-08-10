@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"tts/store"
-	"tts/store/sqlite"
 	"tts/twitch"
 )
 
@@ -27,7 +26,7 @@ func main() {
 		logger.Fatalf("config: %v", err)
 	}
 
-	db, err := sqlite.Open(cfg.DBPath)
+	db, err := openStore(cfg.DBPath)
 	if err != nil {
 		logger.Fatalf("store %s: %v", cfg.DBPath, err)
 	}
@@ -171,7 +170,7 @@ func main() {
 // seedCommands inserts a few starter stored-text commands (migrated from
 // StreamElements) when the commands table is empty, so a fresh DB isn't blank.
 // !commands and !voices are dynamic built-ins, so they're not seeded.
-func seedCommands(db *sqlite.Store, logger *log.Logger) {
+func seedCommands(db CommandStore, logger *log.Logger) {
 	names, err := db.List()
 	if err != nil {
 		logger.Printf("seed: %v", err)

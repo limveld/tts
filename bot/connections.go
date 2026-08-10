@@ -7,7 +7,18 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"tts/store"
 )
+
+// ConnectionsWins is the completion-tally slice of the store the Connections
+// game needs (an interface so tests can substitute a fake). Per-group solves pay
+// through the ledger, not here — this counts full completions. *sqlite.Store and
+// *postgres.Store satisfy it.
+type ConnectionsWins interface {
+	ConnectionsAddWin(userID, login, display string) (wins int, err error)
+	ConnectionsLeaderboard(n int) ([]store.ConnectionsWin, error)
+}
 
 // Chat-plays Connections, bot-owned. One shared 4x4 board per round: anyone opens
 // a round with !connections (when idle) and everyone submits a group of four by
