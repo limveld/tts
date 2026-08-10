@@ -5,12 +5,20 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
+	"embed"
+	"fmt"
+	"io/fs"
 
+	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 
 	"tts/store"
 )
+
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
 
 // Store is a SQLite-backed store: one file holding custom commands, the marks
 // ledger, settings and the game tallies.
@@ -18,8 +26,11 @@ type Store struct {
 	db *sql.DB
 }
 
-// Open opens (creating if needed) the SQLite database at path and ensures the
-// schema exists.
+// Open opens (creating if needed) the SQLite database at path and brings its
+// schema up to date. A fresh file comes up fully migrated; an existing one is
+// carried forward. Migrations run here rather than in a separate command because
+// the bot fails fast on a store error — there is no half-migrated state it could
+// limp along in.
 func Open(path string) (*Store, error) {
 	// _txlock=immediate makes every database/sql transaction take the write lock
 	// up front. The default is a DEFERRED transaction, where the read takes a
@@ -38,63 +49,42 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	schema := []string{
-		`CREATE TABLE IF NOT EXISTS commands (
-			name     TEXT PRIMARY KEY,
-			response TEXT NOT NULL,
-			cooldown INTEGER NOT NULL DEFAULT 0,
-			min_role TEXT NOT NULL DEFAULT 'everyone',
-			count    INTEGER NOT NULL DEFAULT 0
-		)`,
-		// Stage 3 loyalty-points ("marks") economy: an identity table and an
-		// append-only ledger (balance = SUM(delta)). See points.go.
-		`CREATE TABLE IF NOT EXISTS users (
-			user_id   TEXT PRIMARY KEY,
-			login     TEXT NOT NULL,
-			display   TEXT NOT NULL,
-			last_seen INTEGER NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS ledger (
-			id      INTEGER PRIMARY KEY AUTOINCREMENT,
-			user_id TEXT NOT NULL,
-			delta   INTEGER NOT NULL,
-			reason  TEXT NOT NULL,
-			ref     TEXT,
-			ts      INTEGER NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS ledger_user ON ledger(user_id)`,
-		// Idempotent channel-point crediting: a redemption id credits at most once.
-		`CREATE UNIQUE INDEX IF NOT EXISTS ledger_ref ON ledger(ref) WHERE ref IS NOT NULL`,
-		// Small key/value store for runtime toggles (e.g. the free/paid charge mode,
-		// the depth points total, and the current Wordle round JSON).
-		`CREATE TABLE IF NOT EXISTS settings (
-			key   TEXT PRIMARY KEY,
-			value TEXT NOT NULL
-		)`,
-		// Wordle win tally (one row per solver). See wordle.go.
-		`CREATE TABLE IF NOT EXISTS wordle_wins (
-			user_id TEXT PRIMARY KEY,
-			login   TEXT NOT NULL,
-			display TEXT NOT NULL,
-			wins    INTEGER NOT NULL DEFAULT 0
-		)`,
-		// Connections completion tally (one row per player who landed the final
-		// group of a puzzle). See connections.go.
-		`CREATE TABLE IF NOT EXISTS connections_wins (
-			user_id TEXT PRIMARY KEY,
-			login   TEXT NOT NULL,
-			display TEXT NOT NULL,
-			wins    INTEGER NOT NULL DEFAULT 0
-		)`,
-	}
-	for _, stmt := range schema {
-		if _, err := db.Exec(stmt); err != nil {
-			db.Close()
-			return nil, err
-		}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, err
 	}
 	return &Store{db: db}, nil
 }
+
+// migrate applies every pending migration in migrations/.
+//
+// It uses goose's provider API rather than the package-level goose.SetDialect /
+// goose.Up globals: the migrate tool and the conformance suite both drive the
+// SQLite and Postgres dialects in one process, and a process-global dialect is a
+// footgun there.
+func migrate(db *sql.DB) error {
+	sub, err := fs.Sub(migrationsFS, "migrations")
+	if err != nil {
+		return err
+	}
+	// goose logs to stdout by default, which under launchd lands unlabelled in
+	// tts-bot.out.log. Silence it; Open's caller owns the logging.
+	p, err := goose.NewProvider(goose.DialectSQLite3, db, sub, goose.WithLogger(quietLogger{}))
+	if err != nil {
+		return fmt.Errorf("migrations: %w", err)
+	}
+	if _, err := p.Up(context.Background()); err != nil {
+		return fmt.Errorf("migrating: %w", err)
+	}
+	return nil
+}
+
+// quietLogger drops goose's chatter. Migration *failures* come back as errors
+// from Up, so nothing diagnostic is lost.
+type quietLogger struct{}
+
+func (quietLogger) Printf(string, ...any) {}
+func (quietLogger) Fatalf(string, ...any) {}
 
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }

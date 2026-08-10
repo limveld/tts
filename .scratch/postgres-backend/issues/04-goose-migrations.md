@@ -1,6 +1,6 @@
 # goose as a library + the SQLite baseline migration
 
-Status: ready-for-agent
+Status: done (2026-08-10)
 Type: task
 Created: 2026-08-10
 
@@ -92,3 +92,22 @@ adoptable by an existing database without any stamping tricks.
 - `store/sqlite/store.go` (`Open`, the schema slice at lines 43–97 pre-split)
 - goose provider API: `goose.NewProvider`, `goose.DialectSQLite3`, `goose.DialectPostgres`
 - Fail-fast decision this interacts with: `bot/main.go:31` (`logger.Fatalf`)
+
+## Comments
+
+**2026-08-10 — shipped.**
+
+`00001_baseline.sql` is the old inline schema slice statement for statement, with a header saying it
+is frozen and why. `migrate()` uses `goose.NewProvider(goose.DialectSQLite3, db, sub, …)` — never the
+package-level globals — and a `quietLogger` swallows goose's stdout chatter (migration *failures*
+still surface as errors from `Up`).
+
+**Proven against the real data, not just a fixture.** A `VACUUM INTO` copy of the live `bot.db` was
+opened through the new `Open`: no error, `goose_db_version` stamped at 1, all 16,864 ledger rows
+intact, 3 commands, and `Leaderboard` returning the expected top entry through issue 01's rewritten
+SQL. That is the property this issue exists to guarantee.
+
+Dependency note: `go get goose@latest` pulled `modernc.org/sqlite` from v1.53.0 to v1.54.0 and
+`modernc.org/libc` to a **retracted** v1.74.3 as a side effect. Both were pinned back, which settles
+goose at v3.27.2. Swapping the SQLite engine underneath a live money database is not something to do
+as a silent side effect of adding a migration library.
