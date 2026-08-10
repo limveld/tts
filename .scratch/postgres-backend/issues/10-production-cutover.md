@@ -1,6 +1,6 @@
 # Execute the production cutover
 
-Status: ready-for-human — code complete, runbook not executed
+Status: cut over 2026-08-10 22:00 — steps 1-7, 10 done; live chat smoke tests (8) and the soak (9, 11) pending
 Type: task
 Created: 2026-08-10
 
@@ -145,3 +145,37 @@ understanding before continuing.
 Steps 1–2 (stream offline, no round open, stop the bot), 3 (archive — **`VACUUM INTO`, never `cp`**),
 7 (flip), 8 (live chat smoke tests), 9 (watch the logs through a stream), 10 (`mise run
 db:backup:install` and restore one by hand), 11 (after the soak).
+
+### Executed 2026-08-10 ~22:00
+
+Pre-flight was better than the runbook assumes: the bot was **already stopped** (no process, agent
+unloaded), and all three `*_round` settings values were `''`, so no escrowed `!g` marks were at risk.
+Steps 1–2 needed nothing. `mise run test:all` green, Postgres 18 accepting connections.
+
+One check the runbook doesn't list and should: **the installed plist predated `TTS_DATABASE_URL`
+(rendered 2026-07-09), so step 7's reinstall re-renders every baked-in secret from the installing
+shell.** Compared SHA-256 prefixes of `TTS_TOKEN` / `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` and
+the `-channel` argument between the old plist and the shell before installing — all four identical,
+so the reinstall changed exactly one thing. Had they differed, the flip would have silently disabled
+chat replies and the cause would have looked like a Postgres problem.
+
+| Step | Result |
+|---|---|
+| 3 archive | `bot.db.pre-postgres` (880K) — ledger/sum/max id identical to live |
+| 4 create + migrate | `tts` at schema 2, 8 tables + `goose_db_version`, empty |
+| 5 copy | 3 · 114 · 0 · **16,864** · 3 · 5 · 1 · 0, sequence → 16,865 |
+| 6 verify | **114/114 balances · sum(delta) 20,089 · counts match · top-50 identical** |
+| 7 flip | agent reinstalled with the DSN, bot up as pid 52051, joined `#rtukpe` 21:59:32 |
+| 10 backup | `tts-20260810-2200.dump` (84K) taken, `pg_restore`d into a scratch DB, **verified 114/114 against live**, scratch dropped |
+
+Post-flip confirmation: an idle `pgx` connection on the `tts` database; `settings.charge_mode` read
+from Postgres as `free`, matching the log's `economy enabled (free)`; pid stable across samples with
+`last exit code = (never exited)`, so no crash loop; and **no deadlock, duplicate-key, SQLSTATE or
+5432 errors** in `tts-bot.err.log`.
+
+The one `connection refused` in the log is port **8080 — the TTS server**, which is a separate agent
+and is currently not loaded. Unrelated to the cutover, but it means `!tts`/`!sfx` produce no audio
+and the overlay gets no pushes until `mise run server:service:install`.
+
+Both rollback paths are live: `bot.db` (untouched data, now itself at schema 2 because the copier
+opens it through `Open`) and the pre-migration `bot.db.pre-postgres`.
