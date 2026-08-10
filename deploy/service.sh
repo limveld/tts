@@ -3,7 +3,7 @@
 # Manage a component (server|bot) as a macOS launchd LaunchAgent (per-user, GUI
 # session so it has audio + GPU access).
 #
-# Usage: deploy/service.sh <server|bot> <command>
+# Usage: deploy/service.sh <server|bot|pgbackup> <command>
 #   install    render the plist, load & enable the agent (starts now and at login)
 #   uninstall  unload the agent and remove the plist
 #   start      load the agent (or restart it if already loaded)
@@ -17,7 +17,9 @@
 #   both:   TTS_TOKEN (baked into the plist's EnvironmentVariables; empty = no auth)
 #   server: TTS_ADDR (default 127.0.0.1:8080)
 #   bot:    TTS_CHANNEL (required for install), TTS_URL (default http://127.0.0.1:8080),
-#           TWITCH_CLIENT_ID / TWITCH_CLIENT_SECRET (enable chat replies; empty = disabled)
+#           TWITCH_CLIENT_ID / TWITCH_CLIENT_SECRET (enable chat replies; empty = disabled),
+#           TTS_DATABASE_URL (a postgres:// DSN; empty = SQLite bot.db)
+#   pgbackup: TTS_DATABASE_URL (required for install)
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,12 +33,13 @@ esc() { printf '%s' "${1:-}" | sed 's/[&|\\]/\\&/g'; }
 TOKEN_ESC=$(esc "${TTS_TOKEN:-}")
 TWITCH_ID_ESC=$(esc "${TWITCH_CLIENT_ID:-}")
 TWITCH_SECRET_ESC=$(esc "${TWITCH_CLIENT_SECRET:-}")
+TTS_DB_ESC=$(esc "${TTS_DATABASE_URL:-}")
 
 TARGET="${1:-}"
 CMD="${2:-}"
 
 usage() {
-  echo "usage: $(basename "$0") <server|bot> <install|uninstall|start|stop|restart|status|logs|render>" >&2
+  echo "usage: $(basename "$0") <server|bot|pgbackup> <install|uninstall|start|stop|restart|status|logs|render>" >&2
   exit 1
 }
 
@@ -68,6 +71,7 @@ case "$TARGET" in
           -e "s|__TTS_TOKEN__|$TOKEN_ESC|g" \
           -e "s|__TWITCH_CLIENT_ID__|$TWITCH_ID_ESC|g" \
           -e "s|__TWITCH_CLIENT_SECRET__|$TWITCH_SECRET_ESC|g" \
+          -e "s|__TTS_DATABASE_URL__|$TTS_DB_ESC|g" \
           "$REPO/deploy/$LABEL.plist.template"
     }
     health() { echo "  (bot has no HTTP endpoint; check logs)"; }
@@ -76,6 +80,40 @@ case "$TARGET" in
         echo "error: set TTS_CHANNEL=<your_channel> for the bot" >&2
         exit 1
       fi
+      # Warn, never block. The bot is designed to fail fast and let launchd
+      # retry: at login it may well start before Postgres does, and blocking
+      # here would push people toward "fixing" that with a retry loop, which
+      # would turn every `if r.store == nil` guard into a live code path.
+      case "${TTS_DATABASE_URL:-}" in
+        postgres://*|postgresql://*)
+          if ! pg_isready -q 2>/dev/null; then
+            echo "warning: TTS_DATABASE_URL is Postgres but pg_isready says it's down." >&2
+            echo "         Installing anyway: the bot will crash-loop (~10s apart) until it's up." >&2
+            echo "         Start it with 'mise run db:start'." >&2
+          fi
+          ;;
+      esac
+    }
+    ;;
+  pgbackup)
+    LABEL="com.rtukpe.tts-pg-backup"
+    BIN="$REPO/deploy/pg-backup.sh"
+    LOGBASE="tts-pg-backup"
+    BUILD_HINT="(none — it's a shell script)"
+    render() {
+      sed -e "s|__REPO__|$REPO|g" -e "s|__LOGDIR__|$LOGDIR|g" \
+          -e "s|__TTS_DATABASE_URL__|$TTS_DB_ESC|g" \
+          "$REPO/deploy/$LABEL.plist.template"
+    }
+    health() { echo "  (scheduled daily at 05:00; see $LOGDIR/$LOGBASE.out.log)"; }
+    preflight() {
+      case "${TTS_DATABASE_URL:-}" in
+        postgres://*|postgresql://*) ;;
+        *)
+          echo "error: set TTS_DATABASE_URL to the postgres:// DSN to back up" >&2
+          exit 1
+          ;;
+      esac
     }
     ;;
   *)
@@ -87,7 +125,7 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 case "$CMD" in
   install)
-    if [ ! -x "$BIN" ]; then
+    if [ ! -x "$BIN" ] && [ ! -r "$BIN" ]; then
       echo "error: $BIN not found — run 'mise run $BUILD_HINT' first" >&2
       exit 1
     fi

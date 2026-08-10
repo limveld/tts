@@ -26,9 +26,9 @@ func main() {
 		logger.Fatalf("config: %v", err)
 	}
 
-	db, err := openStore(cfg.DBPath)
+	db, err := openStore(cfg.DB)
 	if err != nil {
-		logger.Fatalf("store %s: %v", cfg.DBPath, err)
+		logger.Fatalf("store %s: %v", cfg.DB, err)
 	}
 	defer db.Close()
 	seedCommands(db, logger)

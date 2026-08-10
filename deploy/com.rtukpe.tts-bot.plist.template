@@ -23,8 +23,9 @@
 
   <key>EnvironmentVariables</key>
   <dict>
+    <!-- /opt/homebrew/bin so psql/pg_dump are reachable when the DSN is Postgres. -->
     <key>PATH</key>
-    <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <!-- Bearer token the bot sends to the TTS server; substituted from the
          installing shell's $TTS_TOKEN by deploy/service.sh. Empty = no auth. -->
     <key>TTS_TOKEN</key>
@@ -37,6 +38,12 @@
     <string>__TWITCH_CLIENT_ID__</string>
     <key>TWITCH_CLIENT_SECRET</key>
     <string>__TWITCH_CLIENT_SECRET__</string>
+    <!-- Database. Empty means the -db default (bot.db, SQLite); a postgres://
+         URL selects the Postgres backend. Substituted from the installing
+         shell's $TTS_DATABASE_URL by deploy/service.sh, so flipping backends
+         is: export it, reinstall the agent, restart. -->
+    <key>TTS_DATABASE_URL</key>
+    <string>__TTS_DATABASE_URL__</string>
   </dict>
 
   <key>RunAtLoad</key>

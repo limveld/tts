@@ -126,3 +126,117 @@ run = "bash deploy/service.sh bot status"
 [tasks."bot:service:logs"]
 description = "Follow the bot error log"
 run = "bash deploy/service.sh bot logs"
+
+# ---- tests -------------------------------------------------------------------
+
+[tasks.test]
+description = "Run the whole suite (Postgres cases skip if the DB isn't up — the banner says so)"
+run = '''
+if [ -n "${TEST_DATABASE_URL:-}" ] && pg_isready -q 2>/dev/null; then
+  echo "── postgres: $TEST_DATABASE_URL — backend conformance WILL run"
+else
+  echo "── postgres: not configured — backend conformance will be SKIPPED"
+  echo "   (t.Skip is invisible without -v, so this line is the only warning you get)"
+  echo "   set it up with: mise run db:test:setup"
+fi
+go vet ./... && go test ./...
+'''
+
+[tasks."test:all"]
+description = "Run the whole suite and FAIL if Postgres isn't reachable"
+run = '''
+: "${TEST_DATABASE_URL:=postgres:///tts_test}"
+export TEST_DATABASE_URL TTS_REQUIRE_POSTGRES=1
+echo "── postgres required: $TEST_DATABASE_URL"
+go vet ./... && go test ./...
+'''
+
+[tasks."store:test"]
+description = "Run the store suites (both backends)"
+run = "go test ./store/... ./cmd/store-migrate/..."
+
+# ---- database ----------------------------------------------------------------
+#
+# Phase 1 is a local Homebrew Postgres on this Mac. There is deliberately no
+# launchd ordering between it and the bot: brew installs its own login agent and
+# the bot may win the race at boot. The bot fails fast, launchd throttles the
+# respawn, and it comes up once Postgres is listening. See docs/postgres.md.
+
+[tasks."db:install"]
+description = "Install & start Postgres 18 via Homebrew"
+run = '''
+brew install postgresql@18
+brew services start postgresql@18
+'''
+
+[tasks."db:start"]
+description = "Start the Postgres service"
+run = "brew services start postgresql@18"
+
+[tasks."db:stop"]
+description = "Stop the Postgres service"
+run = "brew services stop postgresql@18"
+
+[tasks."db:status"]
+description = "Show the Postgres service state and whether it's accepting connections"
+run = '''
+brew services list | grep postgresql || echo "  postgresql not installed via brew"
+pg_isready || true
+'''
+
+[tasks."db:create"]
+description = "Create the tts database (idempotent)"
+run = 'createdb tts 2>/dev/null && echo "created database tts" || echo "database tts already exists"'
+
+[tasks."db:test:setup"]
+description = "Create the tts_test database and print the export line for TEST_DATABASE_URL"
+run = '''
+createdb tts_test 2>/dev/null && echo "created database tts_test" || echo "database tts_test already exists"
+echo
+echo "Add this to mise.local.toml so the conformance suite runs:"
+echo
+echo "  [env]"
+echo '  TEST_DATABASE_URL = "postgres:///tts_test"'
+'''
+
+[tasks."db:build"]
+description = "Build the store-migrate tool"
+sources = ["cmd/store-migrate/*.go", "store/**/*.go", "go.mod"]
+outputs = ["bin/store-migrate"]
+run = "go build -o bin/store-migrate ./cmd/store-migrate"
+
+[tasks."db:migrate"]
+description = "Create/upgrade the schema on $TTS_DATABASE_URL without copying anything"
+depends = ["db:build"]
+run = './bin/store-migrate -migrate-only -to "${TTS_DATABASE_URL:?set TTS_DATABASE_URL to the postgres:// DSN}"'
+
+[tasks."db:cutover"]
+description = "Copy bot.db into $TTS_DATABASE_URL and verify (bot must be STOPPED)"
+depends = ["db:build"]
+run = './bin/store-migrate -from bot.db -to "${TTS_DATABASE_URL:?set TTS_DATABASE_URL to the postgres:// DSN}"'
+
+[tasks."db:verify"]
+description = "Compare bot.db against $TTS_DATABASE_URL without copying"
+depends = ["db:build"]
+run = './bin/store-migrate -from bot.db -to "${TTS_DATABASE_URL:?set TTS_DATABASE_URL to the postgres:// DSN}" -verify-only'
+
+[tasks."db:rollback"]
+description = "Copy $TTS_DATABASE_URL back into bot.db (bot must be STOPPED), then unset TTS_DATABASE_URL"
+depends = ["db:build"]
+run = './bin/store-migrate -from "${TTS_DATABASE_URL:?set TTS_DATABASE_URL to the postgres:// DSN}" -to bot.db -force'
+
+[tasks."db:psql"]
+description = "Open psql against $TTS_DATABASE_URL"
+run = 'psql "${TTS_DATABASE_URL:?set TTS_DATABASE_URL to the postgres:// DSN}"'
+
+[tasks."db:backup"]
+description = "Take a pg_dump backup now (same script the daily agent runs)"
+run = "bash deploy/pg-backup.sh"
+
+[tasks."db:backup:install"]
+description = "Install the daily 05:00 pg_dump LaunchAgent"
+run = "bash deploy/service.sh pgbackup install"
+
+[tasks."db:backup:uninstall"]
+description = "Remove the daily backup agent"
+run = "bash deploy/service.sh pgbackup uninstall"

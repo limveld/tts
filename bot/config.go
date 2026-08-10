@@ -28,7 +28,7 @@ type Config struct {
 	TwitchSecret   string
 	TokenStore     string
 
-	DBPath          string // SQLite database for custom commands (Stage 2+)
+	DB              string // database: a postgres:// DSN, or a SQLite file path
 	ConnectionsFile string // optional refreshed Connections corpus (falls back to embedded seed)
 
 	Timers []TimerConfig // interval announcements
@@ -63,7 +63,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&c.TwitchClientID, "twitch-client-id", os.Getenv("TWITCH_CLIENT_ID"), "Twitch app client id (env TWITCH_CLIENT_ID); enables chat replies")
 	fs.StringVar(&c.TwitchSecret, "twitch-client-secret", os.Getenv("TWITCH_CLIENT_SECRET"), "Twitch app client secret (env TWITCH_CLIENT_SECRET)")
 	fs.StringVar(&c.TokenStore, "twitch-token-store", "bot.tokens.json", "path to the OAuth token store written by bot-auth")
-	fs.StringVar(&c.DBPath, "db", "bot.db", "SQLite database for custom commands")
+	fs.StringVar(&c.DB, "db", orString(os.Getenv("TTS_DATABASE_URL"), "bot.db"),
+		"database: a postgres:// DSN, or a SQLite file path (env TTS_DATABASE_URL)")
 	fs.StringVar(&c.ConnectionsFile, "connections-file", "connections.json", "refreshed Connections corpus from 'mise run connections:sync' (falls back to the embedded seed)")
 	var timersPath string
 	fs.StringVar(&timersPath, "timers-config", "timers.toml", "timers TOML ([[timer]] announcements); optional")

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.rtukpe.tts-pg-backup</string>
+
+  <!-- __REPO__ / __LOGDIR__ / __TTS_DATABASE_URL__ are substituted by
+       deploy/service.sh. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/deploy/pg-backup.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- /opt/homebrew/bin for pg_dump. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>TTS_DATABASE_URL</key>
+    <string>__TTS_DATABASE_URL__</string>
+  </dict>
+
+  <!-- Daily at 05:00. RunAtLoad is false on purpose: installing the agent should
+       not fire a dump, and a laptop that was asleep at 05:00 gets one shortly
+       after it wakes (launchd runs missed calendar jobs once). -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>5</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__LOGDIR__/tts-pg-backup.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOGDIR__/tts-pg-backup.err.log</string>
+</dict>
+</plist>
