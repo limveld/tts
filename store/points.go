@@ -72,8 +72,13 @@ func (s *Store) Credit(userID string, amount int64, reason, ref string) (credite
 
 // Grant is an admin mint/claw-back (for !grant): a positive delta adds marks
 // unconditionally; a negative delta removes marks but clamps at 0 (never a
-// negative balance). It runs in one immediate transaction and returns the
-// resulting balance. The ledger records the actually-applied delta.
+// negative balance). It returns the resulting balance; the ledger records the
+// actually-applied delta.
+//
+// The check-then-write is atomic because Open sets _txlock=immediate and SQLite
+// admits one writer at a time, so the balance read here can't be invalidated
+// before the insert. A backend with concurrent writers cannot rely on that and
+// must lock the account row explicitly — see store/postgres.
 func (s *Store) Grant(userID string, delta int64, reason string) (newBal int64, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -102,10 +107,13 @@ func (s *Store) Grant(userID string, delta int64, reason string) (newBal int64, 
 	return bal + applied, nil
 }
 
-// Spend deducts amount marks from userID if they can afford it, atomically
-// (the balance check and the debit run in one immediate transaction so a
-// concurrent credit can't be lost and the balance can't go negative). ok is
-// false with no error when the balance is insufficient.
+// Spend deducts amount marks from userID if they can afford it. ok is false with
+// no error when the balance is insufficient.
+//
+// The balance check and the debit share one write transaction, and SQLite's
+// single writer is what makes that a real guarantee: no concurrent debit can
+// slip between them, so the balance can't go negative. See Grant on what a
+// multi-writer backend owes here instead.
 func (s *Store) Spend(userID string, amount int64, reason string) (ok bool, err error) {
 	if amount <= 0 {
 		return true, nil
@@ -134,8 +142,12 @@ func (s *Store) Spend(userID string, amount int64, reason string) (ok bool, err 
 	return true, nil
 }
 
-// Transfer moves amount marks from one user to another atomically (used by
-// !give). ok is false with no error when the sender can't afford it.
+// Transfer moves amount marks from one user to another (used by !give). Both
+// ledger rows land in one transaction, so marks are never in flight. ok is false
+// with no error when the sender can't afford it.
+//
+// As with Spend, the sender's balance check is protected by SQLite's single
+// writer rather than by a lock on the sender's account.
 func (s *Store) Transfer(fromID, toID string, amount int64, reason string) (ok bool, err error) {
 	if amount <= 0 {
 		return true, nil
@@ -172,10 +184,14 @@ func (s *Store) Transfer(fromID, toID string, amount int64, reason string) (ok b
 // current names. Users with no name row are omitted.
 func (s *Store) Leaderboard(n int) ([]LedgerEntry, error) {
 	rows, err := s.db.Query(
+		// GROUP BY names every selected non-aggregate column and HAVING repeats the
+		// aggregate rather than referencing the "bal" alias: SQLite tolerates both
+		// shortcuts, Postgres rejects them. ORDER BY may keep the alias — that one
+		// is legal in either dialect.
 		`SELECT l.user_id, u.login, u.display, SUM(l.delta) AS bal
 		 FROM ledger l JOIN users u ON u.user_id = l.user_id
-		 GROUP BY l.user_id
-		 HAVING bal > 0
+		 GROUP BY l.user_id, u.login, u.display
+		 HAVING SUM(l.delta) > 0
 		 ORDER BY bal DESC, u.display ASC
 		 LIMIT ?`, n)
 	if err != nil {

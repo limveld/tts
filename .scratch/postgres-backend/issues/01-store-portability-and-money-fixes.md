@@ -1,6 +1,6 @@
 # Store portability + money fixes
 
-Status: ready-for-agent
+Status: done (2026-08-10)
 Type: task
 Created: 2026-08-10
 
@@ -76,3 +76,23 @@ rather than a port plus a bug hunt.
 - `store/points.go` (`Leaderboard`, `Grant`, `Spend`, `Transfer`)
 - `store/store.go` (`Open`, the pragma loop)
 - `store/points_test.go`, `store/store_test.go` (`openTemp`)
+
+## Comments
+
+**2026-08-10 — shipped.**
+
+- `Leaderboard` now groups by `l.user_id, u.login, u.display` and repeats the aggregate in
+  `HAVING SUM(l.delta) > 0`. `ORDER BY bal DESC, u.display ASC` keeps the alias.
+- `Open`'s DSN is `file:<path>?_txlock=immediate&_pragma=busy_timeout(5000)`. Confirmed the pinned
+  `modernc.org/sqlite v1.53.0` honours `_txlock` (`sqlite.go:266` parses
+  `deferred|immediate|exclusive`), so the `db.Conn` + explicit `BEGIN IMMEDIATE` fallback wasn't
+  needed. `busy_timeout` moved from a one-off `Exec` — which only ever configured whichever pooled
+  connection served it — into `_pragma`, so it now applies per connection. `journal_mode = WAL`
+  stays an `Exec` because it is a property of the file, not the connection.
+- `Grant`/`Spend`/`Transfer` doc comments now say the atomicity comes from SQLite's single writer
+  and point at `store/postgres` for what a multi-writer backend owes instead.
+
+Tests added: `TestLeaderboardExcludesZeroAndNegative` (a user netting exactly 0 and one netting
+negative are both absent; one at +1 is present), `TestLeaderboardOrderAndTieBreak`, and
+`TestConcurrentSpendNeverOverdraws` (20 goroutines against 100 marks: exactly 10 succeed, final
+balance 0, no errors). `go test -race ./store/...` clean.

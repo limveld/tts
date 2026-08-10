@@ -91,6 +91,79 @@ func TestUsersAndLeaderboard(t *testing.T) {
 	}
 }
 
+// Only users in credit appear. The exclusion lives in the query's HAVING, which
+// is the clause that had to be rewritten to be legal Postgres — so this is the
+// case that catches a regression there in either dialect.
+func TestLeaderboardExcludesZeroAndNegative(t *testing.T) {
+	s := openTemp(t)
+
+	for _, u := range []struct{ id, login, display string }{
+		{"pos", "pos", "Positive"},
+		{"zero", "zero", "Zeroed"},
+		{"neg", "neg", "Negative"},
+	} {
+		if err := s.UpsertUser(u.id, u.login, u.display); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Credit("pos", 1, "accrual", "")
+	// Nets to exactly zero: has ledger rows, but no marks.
+	s.Credit("zero", 50, "accrual", "")
+	s.Spend("zero", 50, "tts")
+	// Nets negative — only reachable by a direct ledger write, but the query must
+	// not surface it if it ever happens.
+	s.Credit("neg", 10, "accrual", "")
+	if _, err := s.db.Exec(
+		`INSERT INTO ledger (user_id, delta, reason, ts) VALUES ('neg', -25, 'correction', 0)`); err != nil {
+		t.Fatal(err)
+	}
+
+	lb, err := s.Leaderboard(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lb) != 1 || lb[0].UserID != "pos" || lb[0].Balance != 1 {
+		t.Fatalf("leaderboard=%+v want only pos(1)", lb)
+	}
+}
+
+func TestLeaderboardOrderAndTieBreak(t *testing.T) {
+	s := openTemp(t)
+
+	// Two users tied at 50, one clear leader. Ties break on display ascending.
+	for _, u := range []struct {
+		id, login, display string
+		amount             int64
+	}{
+		{"lead", "lead", "Zoe", 90},
+		{"tieB", "tieb", "Bea", 50},
+		{"tieA", "tiea", "Ada", 50},
+	} {
+		if err := s.UpsertUser(u.id, u.login, u.display); err != nil {
+			t.Fatal(err)
+		}
+		s.Credit(u.id, u.amount, "accrual", "")
+	}
+
+	lb, err := s.Leaderboard(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range lb {
+		got = append(got, e.Display)
+	}
+	want := []string{"Zoe", "Ada", "Bea"}
+	if len(got) != len(want) {
+		t.Fatalf("leaderboard=%v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("leaderboard=%v want %v", got, want)
+		}
+	}
+}
+
 func TestGrantMintAndClamp(t *testing.T) {
 	s := openTemp(t)
 

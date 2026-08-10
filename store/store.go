@@ -28,17 +28,22 @@ type Store struct {
 // Open opens (creating if needed) the SQLite database at path and ensures the
 // schema exists.
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	// _txlock=immediate makes every database/sql transaction take the write lock
+	// up front. The default is a DEFERRED transaction, where the read takes a
+	// shared lock and the first write attempts an upgrade — and a failed upgrade
+	// returns SQLITE_BUSY immediately rather than waiting out busy_timeout. The
+	// read-then-write money paths (Grant/Spend/Transfer) depend on this.
+	//
+	// busy_timeout is set via _pragma so it applies to every pooled connection;
+	// running it as a one-off Exec only configured whichever connection served it.
+	db, err := sql.Open("sqlite", "file:"+path+"?_txlock=immediate&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
 	}
-	// One bot process writes; a busy timeout + WAL avoid transient "database is
-	// locked" between the command handlers and (later) the points loop.
-	for _, pragma := range []string{"PRAGMA busy_timeout = 5000", "PRAGMA journal_mode = WAL"} {
-		if _, err := db.Exec(pragma); err != nil {
-			db.Close()
-			return nil, err
-		}
+	// WAL is a property of the file, not the connection, so one Exec is enough.
+	if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
+		db.Close()
+		return nil, err
 	}
 	schema := []string{
 		`CREATE TABLE IF NOT EXISTS commands (
