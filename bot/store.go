@@ -1,8 +1,7 @@
 package main
 
 import (
-	"strings"
-
+	"tts/store"
 	"tts/store/postgres"
 	"tts/store/sqlite"
 )
@@ -53,17 +52,15 @@ var (
 	_ Store = (*postgres.Store)(nil)
 )
 
-// openStore opens the backend named by dsn. A "postgres://" or "postgresql://"
-// URL selects Postgres; a "sqlite://" URL or a bare filesystem path selects
-// SQLite. A bare path is the historical spelling and stays the default, so
-// nothing about the current invocation changes.
+// openStore opens the backend named by dsn. What a DSN means is decided once, in
+// store.Classify, so this and cmd/store-migrate can't drift: a "postgres://" URL
+// selects Postgres, a "sqlite://" URL or a bare filesystem path selects SQLite.
+// A bare path is the historical spelling and stays the default, so nothing about
+// the current invocation changes.
 func openStore(dsn string) (Store, error) {
-	switch {
-	case strings.HasPrefix(dsn, "postgres://"), strings.HasPrefix(dsn, "postgresql://"):
-		return postgres.Open(dsn)
-	case strings.HasPrefix(dsn, "sqlite://"):
-		return sqlite.Open(strings.TrimPrefix(dsn, "sqlite://"))
-	default:
-		return sqlite.Open(dsn)
+	backend, target := store.Classify(dsn)
+	if backend == store.PostgresBackend {
+		return postgres.Open(target)
 	}
+	return sqlite.Open(target)
 }

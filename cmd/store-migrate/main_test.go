@@ -1,0 +1,332 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"tts/store"
+	"tts/store/sqlite"
+	"tts/store/storetest"
+)
+
+// runTool invokes the tool the way a human would and returns its output plus
+// whether it succeeded. Nothing here shells out — the point is to exercise the
+// same run() the binary does.
+func runTool(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	runErr := run(args, f)
+	if _, err := f.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b), runErr
+}
+
+// seedSource fills a temp SQLite store through the public API — every table,
+// including the awkward ones: a ledger row with a ref (the partial index), a
+// round document (JSON that has to survive a JSONB round trip), and both
+// tallies.
+func seedSource(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "src.db")
+	s, err := sqlite.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if _, err := s.Add(store.Command{Name: "discord", Response: "join $user", Cooldown: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Add(store.Command{Name: "socials", Response: "links"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []struct{ id, login, display string }{
+		{"u1", "bob", "Bob"}, {"u2", "amy", "Amy"}, {"u3", "zed", "Zed"},
+	} {
+		if err := s.UpsertUser(u.id, u.login, u.display); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Credit("u1", 500, "accrual", "")
+	s.Credit("u1", 250, "convert", "redemption-abc") // exercises the partial unique index
+	s.Credit("u2", 900, "accrual", "")
+	s.Spend("u1", 100, "tts")
+	s.Transfer("u2", "u3", 50, "give")
+	// A user with marks but no identity row, and one with an identity row but no
+	// marks: the verifier's id union has to cover both.
+	s.Credit("nameless", 42, "accrual", "")
+
+	if err := s.SetSetting("charge_mode", "paid"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSetting("depth_points", "1234"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.WordleAddWin("u1", "bob", "Bob"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ConnectionsAddWin("u2", "amy", "Amy"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveRound("gamble", "room1", 1723312860000,
+		[]byte(`{"id":"r1","roomID":"room1","buyIn":100,"endsAt":1723312860000,`+
+			`"entrants":[{"userID":"u1","login":"bob","display":"Bob"}],"winner":-1}`)); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestRoundTripToPostgres(t *testing.T) {
+	dsn := storetest.TempSchemaDSN(t, storetest.PostgresDSN(t))
+	src := seedSource(t)
+
+	out, err := runTool(t, "-from", src, "-to", dsn)
+	if err != nil {
+		t.Fatalf("copy: %v\n%s", err, out)
+	}
+	for _, want := range []string{"balances match", "counts match", "leaderboard top-50 match"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+
+	// A standalone verify pass over the copy the first run just made.
+	if out, err := runTool(t, "-from", src, "-to", dsn, "-verify-only"); err != nil {
+		t.Fatalf("verify-only: %v\n%s", err, out)
+	}
+}
+
+// After a copy, a live Credit must get MAX(id)+1. Without the sequence reset the
+// first mark anyone earns after cutover dies on a duplicate key — and everything
+// looks fine until that moment.
+func TestSequenceIsPastMaxID(t *testing.T) {
+	dsn := storetest.TempSchemaDSN(t, storetest.PostgresDSN(t))
+	src := seedSource(t)
+
+	if out, err := runTool(t, "-from", src, "-to", dsn); err != nil {
+		t.Fatalf("copy: %v\n%s", err, out)
+	}
+
+	dst, _, err := open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dst.Close()
+
+	var maxBefore int64
+	if err := dst.DB().QueryRow(`SELECT MAX(id) FROM ledger`).Scan(&maxBefore); err != nil {
+		t.Fatal(err)
+	}
+	var got int64
+	if err := dst.DB().QueryRow(
+		`INSERT INTO ledger (user_id, delta, reason, ts) VALUES ('after', 1, 'accrual', 0) RETURNING id`,
+	).Scan(&got); err != nil {
+		t.Fatalf("first credit after copy failed — sequence not reset: %v", err)
+	}
+	if got != maxBefore+1 {
+		t.Errorf("new ledger id=%d want %d (max+1)", got, maxBefore+1)
+	}
+}
+
+// The verifier has to be able to fail, or it is decoration.
+func TestVerifyCatchesMutatedBalance(t *testing.T) {
+	dsn := storetest.TempSchemaDSN(t, storetest.PostgresDSN(t))
+	src := seedSource(t)
+
+	if out, err := runTool(t, "-from", src, "-to", dsn); err != nil {
+		t.Fatalf("copy: %v\n%s", err, out)
+	}
+
+	dst, _, err := open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dst.DB().Exec(
+		`INSERT INTO ledger (user_id, delta, reason, ts) VALUES ('u1', -7, 'sabotage', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	dst.Close()
+
+	out, err := runTool(t, "-from", src, "-to", dsn, "-verify-only")
+	if err == nil {
+		t.Fatalf("verify passed after a balance was mutated:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "balance u1") {
+		t.Errorf("error should name the offending user; got: %v", err)
+	}
+}
+
+func TestVerifyCatchesMissingRow(t *testing.T) {
+	dsn := storetest.TempSchemaDSN(t, storetest.PostgresDSN(t))
+	src := seedSource(t)
+
+	if out, err := runTool(t, "-from", src, "-to", dsn); err != nil {
+		t.Fatalf("copy: %v\n%s", err, out)
+	}
+
+	dst, _, err := open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dst.DB().Exec(`DELETE FROM commands WHERE name = 'socials'`); err != nil {
+		t.Fatal(err)
+	}
+	dst.Close()
+
+	out, err := runTool(t, "-from", src, "-to", dsn, "-verify-only")
+	if err == nil {
+		t.Fatalf("verify passed with a command row deleted:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "commands row count") {
+		t.Errorf("error should name the count check; got: %v", err)
+	}
+}
+
+func TestRefusesDirtyDestination(t *testing.T) {
+	dsn := storetest.TempSchemaDSN(t, storetest.PostgresDSN(t))
+	src := seedSource(t)
+
+	if out, err := runTool(t, "-from", src, "-to", dsn); err != nil {
+		t.Fatalf("first copy: %v\n%s", err, out)
+	}
+
+	_, err := runTool(t, "-from", src, "-to", dsn)
+	if err == nil {
+		t.Fatal("second copy without -force was allowed")
+	}
+	if !strings.Contains(err.Error(), "-force") {
+		t.Errorf("refusal should point at -force; got: %v", err)
+	}
+
+	// With -force it proceeds. The rows are duplicated, so verification is
+	// expected to fail — what's being tested is that the guard was bypassed, not
+	// that the result is sane.
+	out, forceErr := runTool(t, "-from", src, "-to", dsn, "-force")
+	if strings.Contains(out, "destination is not empty") {
+		t.Error("-force did not bypass the guard")
+	}
+	if forceErr == nil {
+		t.Error("copying over existing rows should fail verification")
+	}
+}
+
+// Postgres -> a fresh SQLite file: the rollback direction. Losing this is what
+// turns a rollback plan back into a rollback hope.
+func TestReverseDirection(t *testing.T) {
+	dsn := storetest.TempSchemaDSN(t, storetest.PostgresDSN(t))
+	src := seedSource(t)
+
+	if out, err := runTool(t, "-from", src, "-to", dsn); err != nil {
+		t.Fatalf("forward copy: %v\n%s", err, out)
+	}
+
+	back := filepath.Join(t.TempDir(), "back.db")
+	out, err := runTool(t, "-from", dsn, "-to", back)
+	if err != nil {
+		t.Fatalf("reverse copy: %v\n%s", err, out)
+	}
+
+	// The round document survived the SQLite -> JSONB -> SQLite round trip, and
+	// the ledger's ref idempotency came with it.
+	s, err := sqlite.Open(back)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	round, ok, err := s.LoadRound("gamble")
+	if err != nil || !ok {
+		t.Fatalf("round lost in the round trip: ok=%v err=%v", ok, err)
+	}
+	if round.RoomID != "room1" || round.EndsAt != 1723312860000 {
+		t.Errorf("round columns=%s/%d want room1/1723312860000", round.RoomID, round.EndsAt)
+	}
+	if credited, err := s.Credit("u1", 250, "convert", "redemption-abc"); err != nil || credited {
+		t.Errorf("ref idempotency lost: credited=%v err=%v want false/nil", credited, err)
+	}
+}
+
+// -migrate-only must create the schema without needing (or touching) a source.
+func TestMigrateOnly(t *testing.T) {
+	dsn := storetest.TempSchemaDSN(t, storetest.PostgresDSN(t))
+
+	out, err := runTool(t, "-to", dsn, "-migrate-only")
+	if err != nil {
+		t.Fatalf("migrate-only: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "schema 2") {
+		t.Errorf("output should report the schema version:\n%s", out)
+	}
+
+	dst, _, err := open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dst.Close()
+	var n int64
+	if err := dst.DB().QueryRow(`SELECT COUNT(*) FROM ledger`).Scan(&n); err != nil {
+		t.Fatalf("ledger table missing after -migrate-only: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("ledger has %d rows after -migrate-only, want 0", n)
+	}
+}
+
+// SQLite -> SQLite needs no Postgres, so this one always runs. It covers the
+// copier itself: batching, the column lists, and the verifier's happy path.
+func TestSQLiteToSQLite(t *testing.T) {
+	src := seedSource(t)
+	dst := filepath.Join(t.TempDir(), "dst.db")
+
+	out, err := runTool(t, "-from", src, "-to", dst)
+	if err != nil {
+		t.Fatalf("copy: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "balances match") {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
+// Batching has to hold across the 500-row boundary, and 17k rows is the real
+// shape of the cutover.
+func TestCopyAcrossBatchBoundary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "many.db")
+	s, err := sqlite.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertUser("u1", "bob", "Bob"); err != nil {
+		t.Fatal(err)
+	}
+	const rows = batchRows*2 + 7
+	for i := 0; i < rows; i++ {
+		if _, err := s.Credit("u1", 1, "accrual", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+
+	dst := filepath.Join(t.TempDir(), "many-dst.db")
+	if out, err := runTool(t, "-from", path, "-to", dst); err != nil {
+		t.Fatalf("copy: %v\n%s", err, out)
+	}
+
+	d, err := sqlite.Open(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if b, _ := d.Balance("u1"); b != rows {
+		t.Errorf("balance=%d want %d — a batch was dropped", b, rows)
+	}
+}
