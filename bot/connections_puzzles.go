@@ -73,8 +73,27 @@ func parseConnections(raw []byte) []connPuzzle {
 			}
 		}
 		if ok {
+			normalizeLevels(&p)
 			out = append(out, p)
 		}
 	}
 	return out
+}
+
+// normalizeLevels makes the four groups carry distinct difficulty levels 0..3
+// (yellow → purple). The upstream corpus leaves newer puzzles unlabeled — every
+// group at level -1 — which would otherwise index the color table out of range;
+// those fall back to listing order, which is the order the source publishes
+// difficulties in.
+func normalizeLevels(p *connPuzzle) {
+	var seen [connGroupCount]bool
+	for _, g := range p.Groups {
+		if g.Level < 0 || g.Level >= connGroupCount || seen[g.Level] {
+			for i := range p.Groups {
+				p.Groups[i].Level = i
+			}
+			return
+		}
+		seen[g.Level] = true
+	}
 }

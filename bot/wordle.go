@@ -146,7 +146,7 @@ func (r *Router) startWordle(m ChatMessage) {
 	}
 	dur := r.wordleDuration()
 	st := &wordleState{
-		Answer: wordleAnswers[r.rnd.Intn(len(wordleAnswers))],
+		Answer: wordleAnswers[r.randIntn(len(wordleAnswers))],
 		RoomID: m.RoomID,
 		Rows:   []wordleRowState{},
 		Max:    wordleRows,

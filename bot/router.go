@@ -36,8 +36,13 @@ type Router struct {
 	tts            TTS
 	chat           Chat         // may be nil when the bot isn't authenticated (replies disabled)
 	store          *store.Store // custom commands + marks economy (may be nil → both disabled)
-	rnd            *rand.Rand   // for $random substitution
 	logger         *log.Logger
+
+	// rnd is shared by the (sequential) IRC handler and by game timers firing on
+	// their own goroutines, so every draw goes through randIntn/randShuffle —
+	// *rand.Rand is not safe for concurrent use.
+	rndMu sync.Mutex
+	rnd   *rand.Rand
 
 	economy  bool          // marks economy active: enable !marks/!leaderboard/!grant/…
 	econ     EconomyConfig // currency name + per-command costs
@@ -284,4 +289,21 @@ func (r *Router) listSounds(m ChatMessage) {
 		return
 	}
 	r.logger.Printf("!sfx list for %s", m.User)
+}
+
+// randIntn draws from the shared RNG under rndMu. Game timers fire on their own
+// goroutines alongside the IRC handler, and *rand.Rand is not concurrency-safe,
+// so every draw in the bot goes through here (or randShuffle).
+func (r *Router) randIntn(n int) int {
+	r.rndMu.Lock()
+	defer r.rndMu.Unlock()
+	return r.rnd.Intn(n)
+}
+
+// randShuffle is randIntn's sibling for permutations. swap must not itself draw
+// from the RNG (it would deadlock on rndMu).
+func (r *Router) randShuffle(n int, swap func(i, j int)) {
+	r.rndMu.Lock()
+	defer r.rndMu.Unlock()
+	r.rnd.Shuffle(n, swap)
 }

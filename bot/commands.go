@@ -202,7 +202,7 @@ func (r *Router) runCommand(c store.Command, rest string, m ChatMessage) {
 		Args:  strings.Fields(rest),
 		Rest:  rest,
 		Count: c.Count + 1,
-		rnd:   r.rnd,
+		randN: r.randIntn,
 	}))
 	if err := r.store.IncCount(c.Name); err != nil {
 		r.logger.Printf("inc count %q: %v", c.Name, err)

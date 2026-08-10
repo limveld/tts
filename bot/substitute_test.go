@@ -7,7 +7,8 @@ import (
 )
 
 func TestSubstitute(t *testing.T) {
-	c := subCtx{User: "Bob", Args: []string{"Alice", "there"}, Rest: "Alice there", Count: 7, rnd: rand.New(rand.NewSource(1))}
+	rnd := rand.New(rand.NewSource(1))
+	c := subCtx{User: "Bob", Args: []string{"Alice", "there"}, Rest: "Alice there", Count: 7, randN: rnd.Intn}
 	cases := map[string]string{
 		"hi $user":           "hi Bob",
 		"$touser hello":      "Alice hello",
@@ -27,7 +28,7 @@ func TestSubstitute(t *testing.T) {
 		t.Errorf("$touser no-args=%q want Bob", got)
 	}
 	// $random is replaced by a number.
-	got := substitute("roll $random", subCtx{rnd: rand.New(rand.NewSource(1))})
+	got := substitute("roll $random", subCtx{randN: rnd.Intn})
 	if !strings.HasPrefix(got, "roll ") || got == "roll $random" || strings.Contains(got, "$") {
 		t.Errorf("$random not substituted: %q", got)
 	}

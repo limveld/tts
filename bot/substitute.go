@@ -1,7 +1,6 @@
 package main
 
 import (
-	"math/rand"
 	"strconv"
 	"strings"
 )
@@ -12,7 +11,9 @@ type subCtx struct {
 	Args  []string // whitespace-split args after the command
 	Rest  string   // raw args string
 	Count int      // this command's use count (after this use)
-	rnd   *rand.Rand
+	// randN draws $random's 0..n-1; a function rather than a *rand.Rand so the
+	// shared RNG stays behind the Router's mutex. nil disables $random.
+	randN func(n int) int
 }
 
 // substitute expands the v1 variables in a custom-command response:
@@ -45,8 +46,8 @@ func substitute(resp string, c subCtx) string {
 	// $random: a fresh number per occurrence.
 	for strings.Contains(resp, "$random") {
 		n := 1
-		if c.rnd != nil {
-			n = c.rnd.Intn(100) + 1
+		if c.randN != nil {
+			n = c.randN(100) + 1
 		}
 		resp = strings.Replace(resp, "$random", strconv.Itoa(n), 1)
 	}

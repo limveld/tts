@@ -138,17 +138,15 @@ func TestConnectionsOneAwayAndBust(t *testing.T) {
 		t.Fatalf("repeat wrong guess should not cost a life; mistakes=%d", cs.Mistakes)
 	}
 
-	// three more distinct wrong (one-from-each, never a group) → bust at 4.
-	wrongs := [][]int{
-		{red[0], green[0], blue[0], purple[1]},
-		{red[0], green[0], blue[1], purple[0]},
-		{red[0], green[1], blue[0], purple[0]},
-	}
-	for _, w := range wrongs {
+	// Distinct wrong guesses (one tile from each group, so never a group) until
+	// the allowance runs out. Each k picks a different tuple, hence a different
+	// guess key.
+	for k := 1; k < connMaxMistakes; k++ {
+		w := []int{red[k%4], green[(k/4)%4], blue[(k/16)%4], purple[(k/64)%4]}
 		r.Handle(emsg("bob", "!group "+numArgs(w), false))
 	}
-	if !cs.Done || cs.Won || cs.Mistakes != 4 {
-		t.Fatalf("after 4 mistakes: done=%v won=%v mistakes=%d", cs.Done, cs.Won, cs.Mistakes)
+	if !cs.Done || cs.Won || cs.Mistakes != connMaxMistakes {
+		t.Fatalf("after %d mistakes: done=%v won=%v mistakes=%d", connMaxMistakes, cs.Done, cs.Won, cs.Mistakes)
 	}
 	if !strings.Contains(lastSend(chat), "Out of mistakes") {
 		t.Fatalf("no bust announcement; last=%q", lastSend(chat))
@@ -298,6 +296,39 @@ func TestConnectionsSeedLoads(t *testing.T) {
 			if len(g.Words) != 4 || g.Name == "" {
 				t.Fatalf("puzzle %d group %q malformed", p.ID, g.Name)
 			}
+			if g.Level < 0 || g.Level > 3 {
+				t.Fatalf("puzzle %d group %q level=%d out of 0..3", p.ID, g.Name, g.Level)
+			}
 		}
+	}
+}
+
+// The upstream corpus publishes newer puzzles with every group at level -1.
+// Those must come out of the parser with usable levels — an unlabeled level once
+// panicked the bot on the color-emoji lookup when a group was solved.
+func TestConnectionsUnlabeledLevelsNormalized(t *testing.T) {
+	raw := []byte(`[{"id":1,"date":"2026-01-01","answers":[
+		{"level":-1,"group":"RED","members":["APPLE","CHERRY","RUBY","ROSE"]},
+		{"level":-1,"group":"GREEN","members":["LIME","EMERALD","JADE","MOSS"]},
+		{"level":-1,"group":"BLUE","members":["SKY","OCEAN","SAPPHIRE","DENIM"]},
+		{"level":-1,"group":"PURPLE","members":["GRAPE","PLUM","VIOLET","ORCHID"]}]}]`)
+	puzzles := parseConnections(raw)
+	if len(puzzles) != 1 {
+		t.Fatalf("parsed %d puzzles, want 1", len(puzzles))
+	}
+	for i, g := range puzzles[0].Groups {
+		if g.Level != i {
+			t.Fatalf("group %d (%s) level=%d, want %d", i, g.Name, g.Level, i)
+		}
+	}
+
+	// And solving a group from such a puzzle announces rather than panics.
+	r, _, chat, _ := connRouter(t)
+	r.connPuzzles = puzzles
+	r.Handle(emsg("alice", "!connections", false))
+	cs := r.conn
+	r.Handle(emsg("alice", "!group "+numArgs(tilesFor(cs, puzzles[0].Groups[0].Words)), false))
+	if len(cs.SolvedIdx) != 1 || !strings.Contains(lastSend(chat), "RED") {
+		t.Fatalf("solve on unlabeled puzzle: solved=%v last=%q", cs.SolvedIdx, lastSend(chat))
 	}
 }

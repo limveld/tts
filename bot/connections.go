@@ -25,7 +25,7 @@ const (
 	connTiles           = 16
 	connGroupCount      = 4
 	connGroupSize       = 4
-	connMaxMistakes     = 4
+	connMaxMistakes     = 10
 	connSettingKey      = "connections_round"
 	connResultLinger    = 12 * time.Second
 	connDefaultDuration = 3 * time.Minute
@@ -33,6 +33,16 @@ const (
 )
 
 var connLevelEmoji = [4]string{"🟨", "🟩", "🟦", "🟪"}
+
+// connLevel keeps a group's difficulty inside the color table. Levels are
+// normalized when the corpus is parsed (see normalizeLevels), so this only
+// catches a round restored from a store written before that normalization.
+func connLevel(level int) int {
+	if level < 0 || level >= len(connLevelEmoji) {
+		return 0
+	}
+	return level
+}
 
 // connectionsState is a round's full state (internal; the overlay gets a filtered
 // payload built by buildConnPayload, and persistence uses connRec — neither
@@ -94,13 +104,13 @@ func (r *Router) startConnections(m ChatMessage) {
 		return
 	}
 
-	puzzle := &r.connPuzzles[r.rnd.Intn(len(r.connPuzzles))]
+	puzzle := &r.connPuzzles[r.randIntn(len(r.connPuzzles))]
 	// Collect the 16 words and shuffle their assignment to tile numbers 1..16.
 	words := make([]string, 0, connTiles)
 	for _, g := range puzzle.Groups {
 		words = append(words, g.Words...)
 	}
-	r.rnd.Shuffle(len(words), func(i, j int) { words[i], words[j] = words[j], words[i] })
+	r.randShuffle(len(words), func(i, j int) { words[i], words[j] = words[j], words[i] })
 	order := make([]int, connTiles)
 	for i := range order {
 		order[i] = i + 1
@@ -291,8 +301,9 @@ func (st *connectionsState) removeFromBoard(nums []int) {
 
 // announceGroup posts a solved-group line and pays the solver a per-color reward.
 func (r *Router) announceGroup(m ChatMessage, g connGroup, nums []int) {
-	reward := r.econ.ConnectionsGroupReward * int64(g.Level+1)
-	emoji := connLevelEmoji[g.Level%4]
+	level := connLevel(g.Level)
+	reward := r.econ.ConnectionsGroupReward * int64(level+1)
+	emoji := connLevelEmoji[level]
 	tiles := numsString(nums)
 	if r.economy && reward > 0 {
 		if _, err := r.store.Credit(m.UserID, reward, "connections_group", ""); err != nil {
@@ -401,7 +412,7 @@ func (r *Router) shuffleConnections(m ChatMessage) {
 		r.reply(m, "no Connections round to shuffle.")
 		return
 	}
-	r.rnd.Shuffle(len(st.Order), func(i, j int) { st.Order[i], st.Order[j] = st.Order[j], st.Order[i] })
+	r.randShuffle(len(st.Order), func(i, j int) { st.Order[i], st.Order[j] = st.Order[j], st.Order[i] })
 	r.persistConnections(st)
 	r.connMu.Unlock()
 	r.pushConnections(st)
@@ -589,6 +600,7 @@ func (r *Router) restoreConnections() {
 		r.clearConnectionsPersist()
 		return
 	}
+	normalizeLevels(rec.Puzzle) // a round persisted before levels were normalized
 	tried := make(map[string]bool, len(rec.Tried))
 	for _, k := range rec.Tried {
 		tried[k] = true

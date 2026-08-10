@@ -1,8 +1,13 @@
 package main
 
 import (
+	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"tts/store"
 )
 
 // The gamble tests drive resolveGamble/flushJoins directly instead of waiting on
@@ -214,4 +219,326 @@ func TestGambleBelowMinBet(t *testing.T) {
 	if !strings.Contains(lastReply(chat), "minimum buy-in is 10 marks") {
 		t.Fatalf("reply=%q", lastReply(chat))
 	}
+}
+
+// --- durability: a round must survive a bot restart -------------------------
+
+// crashGamble simulates the bot dying mid-round: the deadline is moved to
+// `remaining` from now (negative = already passed), the record is re-persisted,
+// and the in-memory round is dropped along with its timers — exactly the state a
+// restart leaves behind.
+func crashGamble(r *Router, remaining time.Duration) {
+	r.gambleMu.Lock()
+	defer r.gambleMu.Unlock()
+	r.round.endsAt = time.Now().Add(remaining)
+	r.persistGamble(r.round)
+	r.round = nil
+}
+
+// rebootRouter builds a fresh router over an existing store: same durable ledger
+// and settings, brand-new in-memory state. This is the bot coming back up.
+func rebootRouter(t *testing.T, st *store.Store) (*Router, *fakeChat, *fakeOverlay) {
+	t.Helper()
+	r, _, _, chat := econRouter(t)
+	r.store = st
+	ov := &fakeOverlay{}
+	r.overlay = ov
+	return r, chat, ov
+}
+
+// persistedRound decodes the stored round, or reports that none is stored.
+func persistedRound(t *testing.T, st *store.Store) (gambleRec, bool) {
+	t.Helper()
+	v, ok, err := st.GetSetting(gambleSettingKey)
+	if err != nil {
+		t.Fatalf("GetSetting: %v", err)
+	}
+	if !ok || v == "" {
+		return gambleRec{}, false
+	}
+	var rec gambleRec
+	if err := json.Unmarshal([]byte(v), &rec); err != nil {
+		t.Fatalf("unmarshal %q: %v", v, err)
+	}
+	return rec, true
+}
+
+func TestGamblePersistsOpenRound(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	st.Credit("id-alice", 500, "accrual", "")
+	r.Handle(gmsg("alice", "!g 100"))
+
+	rec, ok := persistedRound(t, st)
+	if !ok {
+		t.Fatal("open round was not persisted")
+	}
+	if rec.BuyIn != 100 || len(rec.Entrants) != 1 || rec.Entrants[0].UserID != "id-alice" {
+		t.Fatalf("rec=%+v want buy-in 100 with alice", rec)
+	}
+	if rec.Winner != -1 || rec.ID == "" || rec.EndsAt == 0 {
+		t.Fatalf("rec=%+v want winner=-1 with an id and deadline", rec)
+	}
+}
+
+func TestGamblePersistsJoin(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	st.Credit("id-alice", 500, "accrual", "")
+	st.Credit("id-bob", 500, "accrual", "")
+	r.Handle(gmsg("alice", "!g 100"))
+	r.Handle(gmsg("bob", "!g"))
+
+	rec, _ := persistedRound(t, st)
+	if len(rec.Entrants) != 2 || rec.Entrants[1].UserID != "id-bob" {
+		t.Fatalf("rec.Entrants=%+v want alice then bob", rec.Entrants)
+	}
+}
+
+func TestGambleClearsPersistOnResolve(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	st.Credit("id-alice", 500, "accrual", "")
+	r.Handle(gmsg("alice", "!g 100"))
+	r.resolveGamble(r.round)
+
+	if rec, ok := persistedRound(t, st); ok {
+		t.Fatalf("round still persisted after resolve: %+v", rec)
+	}
+}
+
+// The reported bug: alice opens a gamble, nobody joins, the bot restarts inside
+// the round window — and her buy-in is gone forever because the only timer that
+// would have refunded her died with the process.
+func TestGambleRestartRefundsSoloRound(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	st.Credit("id-alice", 500, "accrual", "")
+	r.Handle(gmsg("alice", "!g 100"))
+	if b, _ := st.Balance("id-alice"); b != 400 {
+		t.Fatalf("balance=%d want 400 escrowed", b)
+	}
+	crashGamble(r, -time.Second) // deadline passed while the bot was down
+
+	r2, chat2, _ := rebootRouter(t, st)
+	r2.loadGamble()
+
+	if b, _ := st.Balance("id-alice"); b != 500 {
+		t.Fatalf("balance=%d want 500 — the escrowed buy-in was not refunded", b)
+	}
+	if r2.round != nil {
+		t.Fatalf("round still live after settling: %+v", r2.round)
+	}
+	if rec, ok := persistedRound(t, st); ok {
+		t.Fatalf("settled round still persisted: %+v", rec)
+	}
+	if !strings.Contains(lastSend(chat2), "refunded") {
+		t.Fatalf("no refund announcement; last=%q", lastSend(chat2))
+	}
+}
+
+func TestGambleRestartPaysOutMultiplayerRound(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	st.Credit("id-alice", 500, "accrual", "")
+	st.Credit("id-bob", 500, "accrual", "")
+	r.Handle(gmsg("alice", "!g 100"))
+	r.Handle(gmsg("bob", "!g"))
+	crashGamble(r, -time.Second)
+
+	r2, chat2, _ := rebootRouter(t, st)
+	r2.loadGamble()
+
+	a, _ := st.Balance("id-alice")
+	b, _ := st.Balance("id-bob")
+	if a+b != 1000 {
+		t.Fatalf("alice=%d bob=%d — marks not conserved (want 1000 total)", a, b)
+	}
+	if a != 600 && b != 600 {
+		t.Fatalf("alice=%d bob=%d — nobody was paid the 200 pot", a, b)
+	}
+	if !strings.Contains(lastSend(chat2), "wins the pot") {
+		t.Fatalf("no payout announcement; last=%q", lastSend(chat2))
+	}
+	if _, ok := persistedRound(t, st); ok {
+		t.Fatal("paid-out round still persisted")
+	}
+}
+
+func TestGambleRestartReschedulesOpenRound(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	st.Credit("id-alice", 500, "accrual", "")
+	st.Credit("id-bob", 500, "accrual", "")
+	r.Handle(gmsg("alice", "!g 100"))
+	r.Handle(gmsg("bob", "!g"))
+	crashGamble(r, 50*time.Second) // still inside the window
+
+	r2, _, ov2 := rebootRouter(t, st)
+	r2.loadGamble()
+
+	rd := r2.round
+	if rd == nil || len(rd.entrants) != 2 || !rd.joined["id-bob"] {
+		t.Fatalf("round not resumed as open: %+v", rd)
+	}
+	if a, _ := st.Balance("id-alice"); a != 400 {
+		t.Fatalf("alice=%d — a resumed round must not settle yet", a)
+	}
+	p, ok := ov2.last("gamble")
+	if !ok {
+		t.Fatal("no overlay push for the resumed round")
+	}
+	d := p.data.(gamblePanelData)
+	if d.Phase != "open" || d.EndsAt == 0 || d.Pot != 200 {
+		t.Fatalf("panel=%+v want open with a deadline and the 200 pot", d)
+	}
+}
+
+// A long outage shouldn't surprise chat with a payout for a round nobody
+// remembers — an undrawn round that went stale refunds instead.
+func TestGambleStaleRoundRefundsInsteadOfPayingOut(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	st.Credit("id-alice", 500, "accrual", "")
+	st.Credit("id-bob", 500, "accrual", "")
+	r.Handle(gmsg("alice", "!g 100"))
+	r.Handle(gmsg("bob", "!g"))
+	crashGamble(r, -(gambleStaleAfter + time.Minute))
+
+	r2, chat2, _ := rebootRouter(t, st)
+	r2.loadGamble()
+
+	a, _ := st.Balance("id-alice")
+	b, _ := st.Balance("id-bob")
+	if a != 500 || b != 500 {
+		t.Fatalf("alice=%d bob=%d want both refunded to 500", a, b)
+	}
+	if strings.Contains(lastSend(chat2), "wins the pot") {
+		t.Fatalf("stale round paid out instead of refunding; last=%q", lastSend(chat2))
+	}
+}
+
+// A restore can race the original timer, so settling twice must not pay twice.
+func TestGambleSettleIsIdempotent(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	st.Credit("id-alice", 500, "accrual", "")
+	st.Credit("id-bob", 500, "accrual", "")
+	r.Handle(gmsg("alice", "!g 100"))
+	r.Handle(gmsg("bob", "!g"))
+	round := r.round
+	r.resolveGamble(round)
+
+	a1, _ := st.Balance("id-alice")
+	b1, _ := st.Balance("id-bob")
+	winner := round.winner
+
+	r.settleGamble(round, false) // as if a restored round re-settled
+
+	a2, _ := st.Balance("id-alice")
+	b2, _ := st.Balance("id-bob")
+	if a1 != a2 || b1 != b2 {
+		t.Fatalf("second settle moved marks: alice %d->%d bob %d->%d", a1, a2, b1, b2)
+	}
+	if round.winner != winner {
+		t.Fatalf("winner re-drawn on re-settle: %d -> %d", winner, round.winner)
+	}
+}
+
+func TestGambleRefundIsIdempotent(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	st.Credit("id-alice", 500, "accrual", "")
+	r.Handle(gmsg("alice", "!g 100"))
+	round := r.round
+	r.resolveGamble(round)
+	r.settleGamble(round, false)
+
+	if b, _ := st.Balance("id-alice"); b != 500 {
+		t.Fatalf("balance=%d want 500 — the refund was applied twice", b)
+	}
+}
+
+// A failed payout must still show and announce the result (the old code returned
+// early, leaving the overlay stuck on "open" forever) and must keep the record so
+// the next boot can retry the same ledger ref.
+func TestGamblePayoutErrorKeepsRoundPersisted(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "g.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, chat, ov := rebootRouter(t, st)
+	st.Credit("id-alice", 500, "accrual", "")
+	st.Credit("id-bob", 500, "accrual", "")
+	r.Handle(gmsg("alice", "!g 100"))
+	r.Handle(gmsg("bob", "!g"))
+	round := r.round
+
+	st.Close() // every store call from here on fails
+	r.resolveGamble(round)
+
+	p, _ := ov.last("gamble")
+	if d := p.data.(gamblePanelData); d.Phase != "result" {
+		t.Fatalf("panel=%+v want a result push despite the failed payout", d)
+	}
+	if !strings.Contains(lastSend(chat), "retrying") {
+		t.Fatalf("no chat line for the failed payout; last=%q", lastSend(chat))
+	}
+
+	st2, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+	if _, ok := persistedRound(t, st2); !ok {
+		t.Fatal("record cleared after a failed payout — the retry is now impossible")
+	}
+}
+
+func TestGambleHideSkippedWhenNewRoundOpen(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	ov := &fakeOverlay{}
+	r.overlay = ov
+	st.Credit("id-alice", 500, "accrual", "")
+	r.Handle(gmsg("alice", "!g 100"))
+	r.resolveGamble(r.round)
+	r.Handle(gmsg("alice", "!g 100")) // a new round within the linger
+
+	r.hideGambleIfIdle()
+
+	p, _ := ov.last("gamble")
+	if d := p.data.(gamblePanelData); d.Phase != "open" {
+		t.Fatalf("panel=%+v — the linger from the old round wiped the live one", d)
+	}
+}
+
+// An unauthenticated boot still has to move the money: chat is nil, the escrow
+// in the ledger is real.
+func TestGambleRestoreWithoutChatDoesNotPanic(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	st.Credit("id-alice", 500, "accrual", "")
+	r.Handle(gmsg("alice", "!g 100"))
+	crashGamble(r, -time.Second)
+
+	r2, _, _ := rebootRouter(t, st)
+	r2.chat = nil
+	r2.loadGamble()
+
+	if b, _ := st.Balance("id-alice"); b != 500 {
+		t.Fatalf("balance=%d want 500 refunded even with no chat", b)
+	}
+}
+
+// The resolve timer draws a winner on its own goroutine while the IRC handler
+// draws for $random / !wordle / !connections. Fails under -race if the shared
+// *rand.Rand is touched directly instead of through randIntn.
+func TestGambleDrawIsRaceFreeWithHandlerDraws(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	st.Credit("id-alice", 500, "accrual", "")
+	st.Credit("id-bob", 500, "accrual", "")
+	r.Handle(gmsg("alice", "!g 100"))
+	r.Handle(gmsg("bob", "!g"))
+	round := r.round
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			substitute("roll $random", subCtx{randN: r.randIntn})
+		}
+	}()
+	r.resolveGamble(round)
+	<-done
 }

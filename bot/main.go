@@ -132,6 +132,14 @@ func main() {
 		logger.Printf("economy configured but disabled: authorize as broadcaster with marks scopes (run 'mise run bot:auth'); !tts/!sfx are free")
 	}
 
+	// Restore a !g round interrupted by a restart — its buy-ins are escrowed in
+	// the ledger, so without this they'd be stranded. Deliberately placed here:
+	// after the economy block above (the settle path formats chat with
+	// econ.CurrencyName) but before irc.Run, so a resumed round is live before the
+	// first join arrives. Outside the economy branch on purpose — the escrow is
+	// real whether or not the economy came up this boot.
+	router.loadGamble()
+
 	if router.chat != nil && len(cfg.Timers) > 0 {
 		timers := NewTimers(cfg.Timers, router.chat, lineCount.Load, roomIDOf, logger)
 		go timers.Run(ctx)
