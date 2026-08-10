@@ -153,8 +153,22 @@ case "$CMD" in
     echo "stopped $LABEL (unloaded; run start to bring it back)"
     ;;
   restart)
-    launchctl kickstart -k "$DOMAIN/$LABEL"
-    echo "restarted $LABEL"
+    # kickstart only works on an already-bootstrapped service, so an agent that
+    # was never loaded (fresh machine, or after uninstall) fails here with
+    # "Could not find service ... in domain for user". Fall back to bootstrap,
+    # the way start does, so `mise run reload` doesn't abort on it.
+    if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+      launchctl kickstart -k "$DOMAIN/$LABEL"
+      echo "restarted $LABEL"
+    elif [ -f "$PLIST" ]; then
+      launchctl bootstrap "$DOMAIN" "$PLIST"
+      echo "restarted $LABEL (was not loaded; bootstrapped it)"
+    else
+      # No plist at all: bootstrap would fail with a path error that says
+      # nothing useful. The fix is install, which renders it.
+      echo "error: $LABEL has never been installed — run 'bash deploy/service.sh $TARGET install'" >&2
+      exit 1
+    fi
     ;;
   status)
     if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
