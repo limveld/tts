@@ -38,3 +38,16 @@ type ConnectionsWin struct {
 	Display string
 	Wins    int
 }
+
+// Round is one in-flight game round: the durable state of gamble/wordle/
+// connections. State is the game's own JSON document and the store never looks
+// inside it. RoomID and EndsAt (unix millis, 0 = none) are lifted out as columns
+// so a round is legible without decoding — the game code still reads them from
+// its own document, so nothing downstream depends on the split.
+type Round struct {
+	Game      string
+	RoomID    string
+	EndsAt    int64
+	State     []byte
+	UpdatedAt int64
+}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -19,7 +18,7 @@ import (
 // store's atomic helpers; chat sends happen after the lock is released.
 //
 // Because the round holds real escrowed marks, it is durable: every mutation
-// mirrors to the gamble_round settings key, and loadGamble restores the round at
+// mirrors to the gamble row in game_rounds, and loadGamble restores the round at
 // startup and reschedules its deadline — otherwise a restart mid-round would kill
 // the only timer that settles it and strand every buy-in. Three rules keep a
 // re-settle safe:
@@ -48,10 +47,6 @@ const gambleResultLinger = 8 * time.Second
 // payout from a round nobody remembers. A round whose winner was already drawn
 // pays out regardless of age — those marks are owed.
 const gambleStaleAfter = 5 * time.Minute
-
-// gambleSettingKey is the settings row holding the open round (see the file
-// header). Empty or absent means no round is in flight.
-const gambleSettingKey = "gamble_round"
 
 // gamblePanelData is the overlay render state for the gamble panel. Phase is
 // "open" (round accepting joins, with a countdown to EndsAt), "result" (winner or
@@ -293,9 +288,6 @@ type gambleEntrantRec struct {
 
 // persistGamble mirrors the round to the store. Caller holds gambleMu.
 func (r *Router) persistGamble(g *gambleRound) {
-	if r.store == nil {
-		return
-	}
 	rec := gambleRec{ID: g.id, RoomID: g.roomID, BuyIn: g.buyIn, Winner: g.winner}
 	if !g.endsAt.IsZero() {
 		rec.EndsAt = g.endsAt.UnixMilli()
@@ -304,14 +296,7 @@ func (r *Router) persistGamble(g *gambleRound) {
 	for i, e := range g.entrants {
 		rec.Entrants[i] = gambleEntrantRec{UserID: e.userID, Login: e.login, Display: e.display}
 	}
-	b, err := json.Marshal(rec)
-	if err != nil {
-		r.logger.Printf("gamble persist marshal: %v", err)
-		return
-	}
-	if err := r.store.SetSetting(gambleSettingKey, string(b)); err != nil {
-		r.logger.Printf("gamble persist: %v", err)
-	}
+	r.saveRound(gambleGame, rec.RoomID, rec.EndsAt, rec)
 }
 
 // clearGamblePersist drops the persisted round once it has settled — but only
@@ -327,30 +312,15 @@ func (r *Router) clearGamblePersist() {
 	if r.round != nil {
 		return
 	}
-	if err := r.store.SetSetting(gambleSettingKey, ""); err != nil {
-		r.logger.Printf("gamble clear persist: %v", err)
-	}
+	r.clearRound(gambleGame)
 }
 
 // loadGamble restores a round interrupted by a restart and settles or resumes it.
 // Without this the round's only timer dies with the process and every escrowed
 // buy-in is stranded. Called once at startup, before the IRC loop.
 func (r *Router) loadGamble() {
-	if r.store == nil {
-		return
-	}
-	v, ok, err := r.store.GetSetting(gambleSettingKey)
-	if err != nil {
-		r.logger.Printf("gamble load: %v", err)
-		return
-	}
-	if !ok || v == "" {
-		return
-	}
 	var rec gambleRec
-	if err := json.Unmarshal([]byte(v), &rec); err != nil {
-		r.logger.Printf("gamble load unmarshal: %v", err)
-		r.clearGamblePersist()
+	if !r.loadRoundInto(gambleGame, &rec) {
 		return
 	}
 	if len(rec.Entrants) == 0 || rec.BuyIn <= 0 {

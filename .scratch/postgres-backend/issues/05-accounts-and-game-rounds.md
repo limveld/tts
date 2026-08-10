@@ -1,6 +1,6 @@
 # accounts + game_rounds tables, and rewiring the three games
 
-Status: ready-for-agent
+Status: done (2026-08-10)
 Type: task
 Created: 2026-08-10
 
@@ -173,3 +173,35 @@ bot/connections.go  persistConn.  ─┘        └─> RoundStore  SaveRound / 
 - `bot/main.go:71-75, 141` — startup order: depth push, `loadWordle`, `loadConnections`, then
   `loadGamble` after the economy is up. That ordering comment must survive.
 - `store/sqlite/settings.go` — the KV path the rounds are leaving
+
+## Comments
+
+**2026-08-10 — shipped.**
+
+Migration `00002` adds `accounts` (pure lock token, no balance column) and `game_rounds`, carries the
+three `*_round` settings keys across with `json_extract`, and deletes them. `json_extract` is
+available in the pinned `modernc.org/sqlite` build, so the two `COALESCE` expressions were kept and
+the columns really are extracted rather than defaulted.
+
+`bot/rounds.go` collapses nine near-identical functions into `saveRound`/`loadRoundInto`/
+`clearRound`. Net effect on the three games: `persistGamble` is now four lines of record-building
+plus one call; `clearWordlePersist` and `clearConnectionsPersist` are one-liners; each load site's
+`!ok || v == ""` double-check collapsed to the single `ok` that `LoadRound` returns, because clear is
+a `DELETE` now. `clearGamblePersist` keeps its `gambleMu` re-check — that guard is what stops a
+settling round from wiping a newly-opened one, and it is load-bearing.
+
+Wordle's duplicated six-field anonymous struct is now a named `wordleRec`, with a comment on why it
+exists at all (`wordleState` marks `Answer`/`RoomID` as `json:"-"` so the overlay payload can't leak
+the answer mid-round; persistence needs them).
+
+**Verified against real data.** Migrating a `VACUUM INTO` copy of the live `bot.db`: 16,864 ledger
+rows intact, `settings` down from 6 rows to 3 (the three `*_round` keys removed), `game_rounds`
+empty — correct, because all three live round values are `''`, i.e. finished rounds under the old
+clear-by-writing-`""` path. The `value <> ''` filter is what makes that come out right; without it
+the bot would have booted trying to restore three empty rounds.
+
+Tests: `TestMigrateCarriesRoundsOutOfSettings` (a real `gambleRec` document moves over with
+`room_id`/`ends_at` extracted, an empty `wordle_round` is *not* resurrected, real settings survive),
+`TestRoundSaveLoadClear`, `persistedRound` reworked onto `LoadRound` and now also asserting the
+lifted-out columns agree with the document, and two new Wordle restart tests — that game had no
+restart coverage at all, unlike gamble and connections. `go test -race ./bot ./store/...` clean.

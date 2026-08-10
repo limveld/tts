@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -37,7 +36,6 @@ const (
 	connGroupCount      = 4
 	connGroupSize       = 4
 	connMaxMistakes     = 10
-	connSettingKey      = "connections_round"
 	connResultLinger    = 12 * time.Second
 	connDefaultDuration = 3 * time.Minute
 	// levelEmoji indexes 0..3 → yellow/green/blue/purple.
@@ -559,9 +557,6 @@ type connRec struct {
 }
 
 func (r *Router) persistConnections(st *connectionsState) {
-	if r.store == nil {
-		return
-	}
 	tried := make([]string, 0, len(st.Tried))
 	for k := range st.Tried {
 		tried = append(tried, k)
@@ -570,41 +565,16 @@ func (r *Router) persistConnections(st *connectionsState) {
 		Puzzle: st.Puzzle, RoomID: st.RoomID, Words: st.Words, Order: st.Order,
 		SolvedIdx: st.SolvedIdx, Mistakes: st.Mistakes, EndsAt: st.EndsAt, Tried: tried,
 	}
-	b, err := json.Marshal(rec)
-	if err != nil {
-		r.logger.Printf("connections persist marshal: %v", err)
-		return
-	}
-	if err := r.store.SetSetting(connSettingKey, string(b)); err != nil {
-		r.logger.Printf("connections persist: %v", err)
-	}
+	r.saveRound(connectionsGame, rec.RoomID, rec.EndsAt, rec)
 }
 
-func (r *Router) clearConnectionsPersist() {
-	if r.store != nil {
-		if err := r.store.SetSetting(connSettingKey, ""); err != nil {
-			r.logger.Printf("connections clear persist: %v", err)
-		}
-	}
-}
+func (r *Router) clearConnectionsPersist() { r.clearRound(connectionsGame) }
 
 // restoreConnections restores an in-progress round on startup and re-pushes it to
 // the overlay. A finished/absent round leaves the board idle.
 func (r *Router) restoreConnections() {
-	if r.store == nil {
-		return
-	}
-	v, ok, err := r.store.GetSetting(connSettingKey)
-	if err != nil {
-		r.logger.Printf("connections load: %v", err)
-		return
-	}
-	if !ok || v == "" {
-		return
-	}
 	var rec connRec
-	if err := json.Unmarshal([]byte(v), &rec); err != nil {
-		r.logger.Printf("connections load unmarshal: %v", err)
+	if !r.loadRoundInto(connectionsGame, &rec) {
 		return
 	}
 	if rec.Puzzle == nil || len(rec.Words) != connTiles {
@@ -620,6 +590,9 @@ func (r *Router) restoreConnections() {
 		Puzzle: rec.Puzzle, RoomID: rec.RoomID, Words: rec.Words, Order: rec.Order,
 		SolvedIdx: rec.SolvedIdx, Mistakes: rec.Mistakes, EndsAt: rec.EndsAt, Tried: tried,
 	}
+	// Assigning r.conn without connMu is safe only because restoreConnections
+	// runs at startup, before the IRC loop and before any game timer exists.
+	// Don't move this call later without taking the lock.
 	r.conn = st
 	if ok, _ := r.claimBoard(boardConnections); !ok {
 		// Another board somehow already holds the stage; don't double-occupy.

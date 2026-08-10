@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestScoreWordle(t *testing.T) {
@@ -169,5 +170,78 @@ func TestWordleAlreadyRunning(t *testing.T) {
 	r.Handle(emsg("bob", "!wordle", false)) // second start rejected
 	if !strings.Contains(lastReply(chat), "already going") {
 		t.Fatalf("reply=%q want 'already going'", lastReply(chat))
+	}
+}
+
+// A half-played board must come back after a restart: same answer, same rows,
+// same deadline, and re-pushed to the overlay. Without this a restart mid-round
+// silently abandons the board and !guess starts replying "no Wordle round".
+func TestWordleRestartRestoresHalfPlayedBoard(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	r.econ.WordleDuration = time.Hour // still open when the "reboot" happens
+	r.Handle(emsg("alice", "!wordle", false))
+	r.wordle.Answer = "ABOUT"
+	r.persistWordle(r.wordle) // pin the answer into the stored round too
+	r.Handle(emsg("bob", "!guess OTHER", false))
+	want := r.wordle
+
+	// A fresh router over the same store: the bot coming back up.
+	r2, _, ov2 := rebootRouter(t, st)
+	r2.loadWordle()
+
+	got := r2.wordle
+	if got == nil {
+		t.Fatal("board not restored — a restart mid-round abandoned it")
+	}
+	if got.Answer != "ABOUT" {
+		t.Errorf("answer=%q want ABOUT (a restored board must still be scorable)", got.Answer)
+	}
+	if len(got.Rows) != 1 || got.Rows[0].Guess != "OTHER" {
+		t.Errorf("rows=%+v want the one played guess", got.Rows)
+	}
+	if got.EndsAt != want.EndsAt {
+		t.Errorf("endsAt=%d want %d (the deadline must survive)", got.EndsAt, want.EndsAt)
+	}
+	if got.Done || got.Won {
+		t.Errorf("restored board done=%v won=%v want an open round", got.Done, got.Won)
+	}
+	if _, ok := ov2.last("wordle"); !ok {
+		t.Error("restored board not re-pushed to the overlay")
+	}
+
+	// And it's playable: solving it still pays out.
+	r2.Handle(emsg("bob", "!guess ABOUT", false))
+	if r2.wordle == nil || !r2.wordle.Won {
+		t.Fatalf("restored board not solvable: %+v", r2.wordle)
+	}
+	if bal, _ := st.Balance("id-bob"); bal != r2.econ.WordleReward {
+		t.Errorf("balance=%d want the reward %d", bal, r2.econ.WordleReward)
+	}
+	// A solved round is cleared, so the next boot starts idle.
+	r2.clearWordlePersist()
+	r3, _, _ := rebootRouter(t, st)
+	r3.loadWordle()
+	if r3.wordle != nil {
+		t.Errorf("finished round resurrected: %+v", r3.wordle)
+	}
+}
+
+// A finished board is dropped rather than restored, even if it was still stored.
+func TestWordleRestartDropsFinishedBoard(t *testing.T) {
+	r, _, st, _ := econRouter(t)
+	r.Handle(emsg("alice", "!wordle", false))
+	r.wordle.Answer = "ABOUT"
+	r.Handle(emsg("bob", "!guess ABOUT", false)) // solves; scheduleWordleClear runs later
+
+	// Force the finished board to still be stored at boot.
+	r.persistWordle(r.wordle)
+
+	r2, _, _ := rebootRouter(t, st)
+	r2.loadWordle()
+	if r2.wordle != nil {
+		t.Fatalf("finished board restored: %+v", r2.wordle)
+	}
+	if _, ok, _ := st.LoadRound(wordleGame); ok {
+		t.Error("finished round left in the store")
 	}
 }

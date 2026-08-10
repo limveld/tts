@@ -246,19 +246,25 @@ func rebootRouter(t *testing.T, st Store) (*Router, *fakeChat, *fakeOverlay) {
 	return r, chat, ov
 }
 
-// persistedRound decodes the stored round, or reports that none is stored.
+// persistedRound decodes the stored round, or reports that none is stored. It
+// also checks that the lifted-out columns agree with the document, which is the
+// only place anything asserts that — the game code reads both from the JSON.
 func persistedRound(t *testing.T, st Store) (gambleRec, bool) {
 	t.Helper()
-	v, ok, err := st.GetSetting(gambleSettingKey)
+	row, ok, err := st.LoadRound(gambleGame)
 	if err != nil {
-		t.Fatalf("GetSetting: %v", err)
+		t.Fatalf("LoadRound: %v", err)
 	}
-	if !ok || v == "" {
+	if !ok {
 		return gambleRec{}, false
 	}
 	var rec gambleRec
-	if err := json.Unmarshal([]byte(v), &rec); err != nil {
-		t.Fatalf("unmarshal %q: %v", v, err)
+	if err := json.Unmarshal(row.State, &rec); err != nil {
+		t.Fatalf("unmarshal %q: %v", row.State, err)
+	}
+	if row.RoomID != rec.RoomID || row.EndsAt != rec.EndsAt {
+		t.Errorf("columns %s/%d disagree with the document %s/%d",
+			row.RoomID, row.EndsAt, rec.RoomID, rec.EndsAt)
 	}
 	return rec, true
 }

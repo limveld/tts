@@ -70,6 +70,11 @@ func seedLegacyDB(t *testing.T, path string, rows ...string) {
 	}
 }
 
+// wantSchemaVersion is the highest migration in migrations/. Bump it when one is
+// added — a test that tracked the max automatically would pass even if the
+// migration never ran.
+const wantSchemaVersion = 2
+
 func schemaVersion(t *testing.T, s *Store) int64 {
 	t.Helper()
 	var v int64
@@ -120,8 +125,8 @@ func TestMigrateAdoptsLegacyDatabase(t *testing.T) {
 		t.Errorf("duplicate ref after migrate: credited=%v err=%v want false/nil", credited, err)
 	}
 
-	if v := schemaVersion(t, s); v != 1 {
-		t.Errorf("goose version=%d want 1", v)
+	if v := schemaVersion(t, s); v != wantSchemaVersion {
+		t.Errorf("goose version=%d want %d", v, wantSchemaVersion)
 	}
 
 	// Reopening is idempotent: no pending migrations, no error, same data.
@@ -134,8 +139,8 @@ func TestMigrateAdoptsLegacyDatabase(t *testing.T) {
 	if b, _ := s2.Balance("u1"); b != 120 {
 		t.Errorf("balance after reopen=%d want 120", b)
 	}
-	if v := schemaVersion(t, s2); v != 1 {
-		t.Errorf("goose version after reopen=%d want 1", v)
+	if v := schemaVersion(t, s2); v != wantSchemaVersion {
+		t.Errorf("goose version after reopen=%d want %d", v, wantSchemaVersion)
 	}
 }
 
@@ -146,8 +151,8 @@ func TestMigrateFreshDatabase(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 
-	if v := schemaVersion(t, s); v != 1 {
-		t.Errorf("goose version=%d want 1", v)
+	if v := schemaVersion(t, s); v != wantSchemaVersion {
+		t.Errorf("goose version=%d want %d", v, wantSchemaVersion)
 	}
 	// A smoke pass over each table the baseline creates.
 	if _, err := s.Add(store.Command{Name: "x", Response: "y"}); err != nil {
@@ -167,5 +172,112 @@ func TestMigrateFreshDatabase(t *testing.T) {
 	}
 	if _, err := s.ConnectionsAddWin("u1", "bob", "Bob"); err != nil {
 		t.Errorf("connections_wins: %v", err)
+	}
+}
+
+// Migration 00002 must carry an in-flight round out of settings and into
+// game_rounds without losing it. This is the case that would strand escrowed !g
+// buy-ins if it were wrong, so the fixture uses a real gamble document rather
+// than a synthetic one.
+func TestMigrateCarriesRoundsOutOfSettings(t *testing.T) {
+	const gambleDoc = `{"id":"1723312800000000000","roomID":"12345","buyIn":100,` +
+		`"endsAt":1723312860000,"entrants":[{"userID":"u1","login":"bob","display":"Bob"},` +
+		`{"userID":"u2","login":"amy","display":"Amy"}],"winner":-1}`
+
+	path := filepath.Join(t.TempDir(), "rounds.db")
+	seedLegacyDB(t, path,
+		`INSERT INTO settings (key, value) VALUES ('gamble_round', '`+gambleDoc+`')`,
+		// A finished round: the old clear path wrote "" rather than deleting, so
+		// this must NOT be resurrected as an in-flight round.
+		`INSERT INTO settings (key, value) VALUES ('wordle_round', '')`,
+		`INSERT INTO settings (key, value) VALUES ('charge_mode', 'paid')`,
+	)
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	round, ok, err := s.LoadRound("gamble")
+	if err != nil || !ok {
+		t.Fatalf("LoadRound(gamble): ok=%v err=%v — the round was lost", ok, err)
+	}
+	// The columns were extracted from the document by json_extract.
+	if round.RoomID != "12345" {
+		t.Errorf("room_id=%q want 12345", round.RoomID)
+	}
+	if round.EndsAt != 1723312860000 {
+		t.Errorf("ends_at=%d want 1723312860000", round.EndsAt)
+	}
+	// And the document itself came across byte-identical, so the entrants (and
+	// therefore the escrow) are intact.
+	if string(round.State) != gambleDoc {
+		t.Errorf("state=%s\nwant %s", round.State, gambleDoc)
+	}
+
+	// The empty wordle round was skipped, not migrated as an in-flight round.
+	if _, ok, err := s.LoadRound("wordle"); err != nil || ok {
+		t.Errorf("LoadRound(wordle): ok=%v err=%v want false/nil (it was finished)", ok, err)
+	}
+
+	// The three *_round keys are gone from settings; real settings are untouched.
+	for _, k := range []string{"gamble_round", "wordle_round", "connections_round"} {
+		if _, ok, _ := s.GetSetting(k); ok {
+			t.Errorf("settings.%s still present after migrate", k)
+		}
+	}
+	if v, ok, _ := s.GetSetting("charge_mode"); !ok || v != "paid" {
+		t.Errorf("charge_mode=%q ok=%v want paid/true", v, ok)
+	}
+}
+
+func TestRoundSaveLoadClear(t *testing.T) {
+	s := openTemp(t)
+
+	if _, ok, err := s.LoadRound("gamble"); err != nil || ok {
+		t.Fatalf("empty: ok=%v err=%v want false/nil", ok, err)
+	}
+	if err := s.SaveRound("gamble", "room1", 1700, []byte(`{"a":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := s.LoadRound("gamble")
+	if err != nil || !ok || got.RoomID != "room1" || got.EndsAt != 1700 || string(got.State) != `{"a":1}` {
+		t.Fatalf("load: %+v ok=%v err=%v", got, ok, err)
+	}
+	if got.UpdatedAt == 0 {
+		t.Error("updated_at not stamped")
+	}
+
+	// Overwrite replaces every column.
+	if err := s.SaveRound("gamble", "room2", 1800, []byte(`{"a":2}`)); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ = s.LoadRound("gamble")
+	if got.RoomID != "room2" || got.EndsAt != 1800 || string(got.State) != `{"a":2}` {
+		t.Fatalf("after overwrite: %+v", got)
+	}
+
+	// Games don't collide.
+	if err := s.SaveRound("wordle", "room3", 0, []byte(`{"b":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := s.LoadRound("gamble"); string(got.State) != `{"a":2}` {
+		t.Fatalf("gamble clobbered by wordle: %s", got.State)
+	}
+
+	// Clear is a delete, so "no round" has exactly one spelling.
+	if err := s.ClearRound("gamble"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.LoadRound("gamble"); ok {
+		t.Error("gamble still present after clear")
+	}
+	if _, ok, _ := s.LoadRound("wordle"); !ok {
+		t.Error("clearing gamble removed wordle too")
+	}
+	// Clearing an absent round is not an error.
+	if err := s.ClearRound("gamble"); err != nil {
+		t.Errorf("clear absent: %v", err)
 	}
 }

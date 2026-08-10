@@ -38,6 +38,7 @@ type Store interface {
 	CommandStore
 	Ledger
 	SettingStore
+	RoundStore
 	WordleWins
 	ConnectionsWins
 

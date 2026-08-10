@@ -2,7 +2,6 @@ package main
 
 import (
 	_ "embed"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -41,7 +40,6 @@ var (
 const (
 	wordleRows            = 6
 	wordleCols            = 5
-	wordleSettingKey      = "wordle_round"
 	wordleResultLinger    = 12 * time.Second // how long the solved/failed board lingers before it's cleared
 	wordleDefaultDuration = 3 * time.Minute  // fallback round length when unset (economy off / no points.toml)
 )
@@ -324,37 +322,28 @@ func (r *Router) showWordleWins(m ChatMessage) {
 
 // --- persistence + overlay push --------------------------------------------
 
-func (r *Router) persistWordle(st *wordleState) {
-	if r.store == nil {
-		return
-	}
-	// Persist the answer too (round survives restart), separate from the overlay
-	// payload which only reveals it when Done.
-	rec := struct {
-		Answer string           `json:"answer"`
-		RoomID string           `json:"roomID"`
-		Rows   []wordleRowState `json:"rows"`
-		Done   bool             `json:"done"`
-		Won    bool             `json:"won"`
-		EndsAt int64            `json:"endsAt"`
-	}{st.Answer, st.RoomID, st.Rows, st.Done, st.Won, st.EndsAt}
-	b, err := json.Marshal(rec)
-	if err != nil {
-		r.logger.Printf("wordle persist marshal: %v", err)
-		return
-	}
-	if err := r.store.SetSetting(wordleSettingKey, string(b)); err != nil {
-		r.logger.Printf("wordle persist: %v", err)
-	}
+// wordleRec is the persisted round. It carries Answer and RoomID, which
+// wordleState marks `json:"-"` so the overlay payload can't leak the answer
+// mid-round — persistence and rendering want different subsets of the same
+// state, which is why this record exists rather than storing wordleState.
+type wordleRec struct {
+	Answer string           `json:"answer"`
+	RoomID string           `json:"roomID"`
+	Rows   []wordleRowState `json:"rows"`
+	Done   bool             `json:"done"`
+	Won    bool             `json:"won"`
+	EndsAt int64            `json:"endsAt"`
 }
 
-func (r *Router) clearWordlePersist() {
-	if r.store != nil {
-		if err := r.store.SetSetting(wordleSettingKey, ""); err != nil {
-			r.logger.Printf("wordle clear persist: %v", err)
-		}
+func (r *Router) persistWordle(st *wordleState) {
+	rec := wordleRec{
+		Answer: st.Answer, RoomID: st.RoomID, Rows: st.Rows,
+		Done: st.Done, Won: st.Won, EndsAt: st.EndsAt,
 	}
+	r.saveRound(wordleGame, rec.RoomID, rec.EndsAt, rec)
 }
+
+func (r *Router) clearWordlePersist() { r.clearRound(wordleGame) }
 
 func (r *Router) pushWordle(st *wordleState) {
 	if r.overlay != nil {
@@ -371,27 +360,8 @@ func (r *Router) pushWordleHidden() {
 // loadWordle restores an in-progress round from the store on startup and re-pushes
 // it to the overlay. A finished/absent round leaves the board idle.
 func (r *Router) loadWordle() {
-	if r.store == nil {
-		return
-	}
-	v, ok, err := r.store.GetSetting(wordleSettingKey)
-	if err != nil {
-		r.logger.Printf("wordle load: %v", err)
-		return
-	}
-	if !ok || v == "" {
-		return
-	}
-	var rec struct {
-		Answer string           `json:"answer"`
-		RoomID string           `json:"roomID"`
-		Rows   []wordleRowState `json:"rows"`
-		Done   bool             `json:"done"`
-		Won    bool             `json:"won"`
-		EndsAt int64            `json:"endsAt"`
-	}
-	if err := json.Unmarshal([]byte(v), &rec); err != nil {
-		r.logger.Printf("wordle load unmarshal: %v", err)
+	var rec wordleRec
+	if !r.loadRoundInto(wordleGame, &rec) {
 		return
 	}
 	if rec.Done { // don't resurrect a finished board
@@ -399,6 +369,9 @@ func (r *Router) loadWordle() {
 		return
 	}
 	st := &wordleState{Answer: rec.Answer, RoomID: rec.RoomID, Rows: rec.Rows, Done: rec.Done, Won: rec.Won, Max: wordleRows, EndsAt: rec.EndsAt}
+	// Assigning r.wordle without wordleMu is safe only because loadWordle runs at
+	// startup, before the IRC loop and before any game timer exists. Don't move
+	// this call later without taking the lock.
 	r.wordle = st
 	r.pushWordle(st)
 
