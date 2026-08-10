@@ -1,9 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 
+	"tts/store/postgres"
 	"tts/store/sqlite"
 )
 
@@ -48,7 +48,10 @@ type Store interface {
 // The backends satisfy the contract, or the build fails. Once there is a
 // conformance suite this is no longer the only proof, but it stays the fastest
 // one.
-var _ Store = (*sqlite.Store)(nil)
+var (
+	_ Store = (*sqlite.Store)(nil)
+	_ Store = (*postgres.Store)(nil)
+)
 
 // openStore opens the backend named by dsn. A "postgres://" or "postgresql://"
 // URL selects Postgres; a "sqlite://" URL or a bare filesystem path selects
@@ -57,7 +60,7 @@ var _ Store = (*sqlite.Store)(nil)
 func openStore(dsn string) (Store, error) {
 	switch {
 	case strings.HasPrefix(dsn, "postgres://"), strings.HasPrefix(dsn, "postgresql://"):
-		return nil, fmt.Errorf("postgres backend not built in yet: %s", dsn)
+		return postgres.Open(dsn)
 	case strings.HasPrefix(dsn, "sqlite://"):
 		return sqlite.Open(strings.TrimPrefix(dsn, "sqlite://"))
 	default:

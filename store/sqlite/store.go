@@ -89,6 +89,11 @@ func (quietLogger) Fatalf(string, ...any) {}
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
+// DB exposes the underlying handle for table-level access the capability
+// interfaces deliberately don't offer. It exists for cmd/store-migrate and
+// nothing else: no code in bot/ or server/ may use it.
+func (s *Store) DB() *sql.DB { return s.db }
+
 // Get returns the command by name; ok is false if it doesn't exist.
 func (s *Store) Get(name string) (store.Command, bool, error) {
 	var c store.Command
