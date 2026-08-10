@@ -1,10 +1,8 @@
-package sqlite
+package storetest
 
 import "testing"
 
-func TestCreditSpendBalance(t *testing.T) {
-	s := openTemp(t)
-
+func testCreditSpendBalance(t *testing.T, s Store) {
 	if b, err := s.Balance("u1"); err != nil || b != 0 {
 		t.Fatalf("empty balance: %d err=%v", b, err)
 	}
@@ -16,7 +14,6 @@ func TestCreditSpendBalance(t *testing.T) {
 		t.Fatalf("balance after credit=%d want 100", b)
 	}
 
-	// Affordable spend.
 	if ok, err := s.Spend("u1", 40, "tts"); err != nil || !ok {
 		t.Fatalf("Spend 40: ok=%v err=%v", ok, err)
 	}
@@ -24,18 +21,40 @@ func TestCreditSpendBalance(t *testing.T) {
 		t.Fatalf("balance after spend=%d want 60", b)
 	}
 
-	// Overspend rejected, balance unchanged.
+	// A non-positive spend is a no-op that succeeds, so callers don't have to
+	// special-case a zero cost.
+	if ok, err := s.Spend("u1", 0, "tts"); err != nil || !ok {
+		t.Errorf("Spend 0: ok=%v err=%v want true/nil", ok, err)
+	}
+	if b, _ := s.Balance("u1"); b != 60 {
+		t.Errorf("balance after zero spend=%d want 60", b)
+	}
+}
+
+func testSpendInsufficient(t *testing.T, s Store) {
+	s.Credit("u1", 60, "accrual", "")
+
+	// Overspend is refused with no error, and changes nothing.
 	if ok, err := s.Spend("u1", 100, "tts"); err != nil || ok {
 		t.Fatalf("overspend: ok=%v err=%v want false/nil", ok, err)
 	}
 	if b, _ := s.Balance("u1"); b != 60 {
 		t.Fatalf("balance after overspend=%d want 60 (unchanged)", b)
 	}
+	// Spending the exact balance is allowed.
+	if ok, err := s.Spend("u1", 60, "tts"); err != nil || !ok {
+		t.Fatalf("spend everything: ok=%v err=%v", ok, err)
+	}
+	if b, _ := s.Balance("u1"); b != 0 {
+		t.Fatalf("balance=%d want 0", b)
+	}
+	// A user who has never been seen can't spend.
+	if ok, _ := s.Spend("ghost", 1, "tts"); ok {
+		t.Error("unknown user was allowed to spend")
+	}
 }
 
-func TestCreditIdempotentRef(t *testing.T) {
-	s := openTemp(t)
-
+func testCreditIdempotentRef(t *testing.T, s Store) {
 	if credited, err := s.Credit("u1", 500, "convert", "redemption-abc"); err != nil || !credited {
 		t.Fatalf("first credit: credited=%v err=%v", credited, err)
 	}
@@ -53,11 +72,19 @@ func TestCreditIdempotentRef(t *testing.T) {
 	if b, _ := s.Balance("u1"); b != 1000 {
 		t.Fatalf("balance=%d want 1000", b)
 	}
+	// Empty refs are NULL, not "", so any number of them coexist — otherwise
+	// the second accrual of the stream would be silently dropped.
+	for i := 0; i < 3; i++ {
+		if credited, err := s.Credit("u1", 1, "accrual", ""); err != nil || !credited {
+			t.Fatalf("unreffed credit %d: credited=%v err=%v", i, credited, err)
+		}
+	}
+	if b, _ := s.Balance("u1"); b != 1003 {
+		t.Fatalf("balance=%d want 1003 (three unreffed credits all landed)", b)
+	}
 }
 
-func TestUsersAndLeaderboard(t *testing.T) {
-	s := openTemp(t)
-
+func testUsersAndLeaderboard(t *testing.T, s Store) {
 	if err := s.UpsertUser("u1", "bob", "Bob"); err != nil {
 		t.Fatal(err)
 	}
@@ -89,14 +116,20 @@ func TestUsersAndLeaderboard(t *testing.T) {
 	if lb[1].UserID != "u1" || lb[1].Balance != 300 || lb[1].Display != "Bobby" {
 		t.Fatalf("leaderboard[1]=%+v want bobby(300)", lb[1])
 	}
+
+	// A user with marks but no identity row is omitted — there'd be no name to
+	// show. This is also what pins the JOIN rather than a LEFT JOIN.
+	s.Credit("anon", 5000, "accrual", "")
+	lb, _ = s.Leaderboard(10)
+	if len(lb) != 2 {
+		t.Fatalf("leaderboard=%+v want the nameless user omitted", lb)
+	}
 }
 
 // Only users in credit appear. The exclusion lives in the query's HAVING, which
-// is the clause that had to be rewritten to be legal Postgres — so this is the
-// case that catches a regression there in either dialect.
-func TestLeaderboardExcludesZeroAndNegative(t *testing.T) {
-	s := openTemp(t)
-
+// had to be rewritten to be legal Postgres, so this is the case that catches a
+// regression there in either dialect.
+func testLeaderboardExcludesZeroAndNegative(t *testing.T, s Store) {
 	for _, u := range []struct{ id, login, display string }{
 		{"pos", "pos", "Positive"},
 		{"zero", "zero", "Zeroed"},
@@ -110,13 +143,11 @@ func TestLeaderboardExcludesZeroAndNegative(t *testing.T) {
 	// Nets to exactly zero: has ledger rows, but no marks.
 	s.Credit("zero", 50, "accrual", "")
 	s.Spend("zero", 50, "tts")
-	// Nets negative — only reachable by a direct ledger write, but the query must
-	// not surface it if it ever happens.
+	// Nets negative. Spend and Grant both refuse to go below zero, so this is
+	// only reachable by writing a negative delta straight to the ledger — but
+	// the query must not surface it if it ever happens.
 	s.Credit("neg", 10, "accrual", "")
-	if _, err := s.db.Exec(
-		`INSERT INTO ledger (user_id, delta, reason, ts) VALUES ('neg', -25, 'correction', 0)`); err != nil {
-		t.Fatal(err)
-	}
+	s.Credit("neg", -25, "correction", "")
 
 	lb, err := s.Leaderboard(10)
 	if err != nil {
@@ -127,17 +158,17 @@ func TestLeaderboardExcludesZeroAndNegative(t *testing.T) {
 	}
 }
 
-func TestLeaderboardOrderAndTieBreak(t *testing.T) {
-	s := openTemp(t)
-
-	// Two users tied at 50, one clear leader. Ties break on display ascending.
+// Ordering is balance descending, ties broken by display ascending — and the
+// tie-break is where the two backends diverge without COLLATE "C". "amy" sorts
+// before "Bea" under en_US.UTF-8 (case-insensitive) but after it in byte order.
+func testLeaderboardOrderAndTieBreak(t *testing.T, s Store) {
 	for _, u := range []struct {
 		id, login, display string
 		amount             int64
 	}{
 		{"lead", "lead", "Zoe", 90},
-		{"tieB", "tieb", "Bea", 50},
-		{"tieA", "tiea", "Ada", 50},
+		{"tieB", "tieb", "amy", 50},
+		{"tieA", "tiea", "Bea", 50},
 	} {
 		if err := s.UpsertUser(u.id, u.login, u.display); err != nil {
 			t.Fatal(err)
@@ -153,20 +184,23 @@ func TestLeaderboardOrderAndTieBreak(t *testing.T) {
 	for _, e := range lb {
 		got = append(got, e.Display)
 	}
-	want := []string{"Zoe", "Ada", "Bea"}
+	want := []string{"Zoe", "Bea", "amy"}
 	if len(got) != len(want) {
 		t.Fatalf("leaderboard=%v want %v", got, want)
 	}
 	for i := range want {
 		if got[i] != want[i] {
-			t.Fatalf("leaderboard=%v want %v", got, want)
+			t.Fatalf("leaderboard=%v want %v (byte order: 'B' < 'a')", got, want)
 		}
+	}
+
+	// The limit is honored.
+	if lb, _ := s.Leaderboard(1); len(lb) != 1 || lb[0].Display != "Zoe" {
+		t.Errorf("Leaderboard(1)=%+v want just Zoe", lb)
 	}
 }
 
-func TestGrantMintAndClamp(t *testing.T) {
-	s := openTemp(t)
-
+func testGrantMintAndClamp(t *testing.T, s Store) {
 	// Mint.
 	if bal, err := s.Grant("u1", 500, "grant"); err != nil || bal != 500 {
 		t.Fatalf("Grant +500: bal=%d err=%v", bal, err)
@@ -182,31 +216,13 @@ func TestGrantMintAndClamp(t *testing.T) {
 	if b, _ := s.Balance("u1"); b != 0 {
 		t.Fatalf("balance=%d want 0 (never negative)", b)
 	}
-}
-
-func TestSettings(t *testing.T) {
-	s := openTemp(t)
-
-	if _, ok, err := s.GetSetting("charge_mode"); err != nil || ok {
-		t.Fatalf("absent setting: ok=%v err=%v want false/nil", ok, err)
-	}
-	if err := s.SetSetting("charge_mode", "free"); err != nil {
-		t.Fatal(err)
-	}
-	if v, ok, err := s.GetSetting("charge_mode"); err != nil || !ok || v != "free" {
-		t.Fatalf("get: v=%q ok=%v err=%v", v, ok, err)
-	}
-	// Overwrite.
-	if err := s.SetSetting("charge_mode", "paid"); err != nil {
-		t.Fatal(err)
-	}
-	if v, _, _ := s.GetSetting("charge_mode"); v != "paid" {
-		t.Fatalf("after overwrite v=%q want paid", v)
+	// A zero grant writes no ledger row but still reports the balance.
+	if bal, err := s.Grant("u1", 0, "grant"); err != nil || bal != 0 {
+		t.Errorf("Grant 0: bal=%d err=%v", bal, err)
 	}
 }
 
-func TestTransfer(t *testing.T) {
-	s := openTemp(t)
+func testTransfer(t *testing.T, s Store) {
 	s.Credit("giver", 100, "accrual", "")
 
 	if ok, err := s.Transfer("giver", "taker", 30, "give"); err != nil || !ok {
@@ -218,12 +234,31 @@ func TestTransfer(t *testing.T) {
 	if b, _ := s.Balance("taker"); b != 30 {
 		t.Fatalf("taker=%d want 30", b)
 	}
+}
 
-	// Can't transfer more than the balance.
+func testTransferInsufficient(t *testing.T, s Store) {
+	s.Credit("giver", 70, "accrual", "")
+
 	if ok, err := s.Transfer("giver", "taker", 1000, "give"); err != nil || ok {
 		t.Fatalf("over-transfer: ok=%v err=%v want false/nil", ok, err)
 	}
 	if b, _ := s.Balance("giver"); b != 70 {
 		t.Fatalf("giver after failed transfer=%d want 70", b)
+	}
+	if b, _ := s.Balance("taker"); b != 0 {
+		t.Fatalf("taker after failed transfer=%d want 0 (no half-transfer)", b)
+	}
+}
+
+// A self-transfer conserves the balance. Worth pinning because the Postgres path
+// locks both sides and must not try to lock the same row twice.
+func testTransferSelfIsNoop(t *testing.T, s Store) {
+	s.Credit("u1", 100, "accrual", "")
+
+	if ok, err := s.Transfer("u1", "u1", 30, "give"); err != nil || !ok {
+		t.Fatalf("self transfer: ok=%v err=%v", ok, err)
+	}
+	if b, _ := s.Balance("u1"); b != 100 {
+		t.Fatalf("balance after self transfer=%d want 100 (unchanged)", b)
 	}
 }

@@ -1,4 +1,4 @@
-package postgres
+package storetest
 
 import (
 	"context"
@@ -9,36 +9,46 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// Postgres tests need a live server, which not every checkout has. They skip by
-// default and turn fatal under TTS_REQUIRE_POSTGRES, so "skipped" can be made
-// into an error where it matters (CI, the pre-cutover check) without making it
-// one everywhere.
+// Postgres conformance needs a live server, which not every checkout has. It
+// skips by default and turns fatal under TTS_REQUIRE_POSTGRES, so "skipped" can
+// be made into an error where it matters — before a cutover, say — without
+// making it one everywhere.
+//
+// t.Skip messages are invisible without -v and a passing package's output is
+// swallowed, so the skip is only half the story: mise's `test` task prints a
+// preflight banner, which is where a human actually learns Postgres cases
+// didn't run.
 
 var schemaCounter atomic.Int64
 
-// postgresDSN returns the conformance DSN, or skips with instructions.
-func postgresDSN(t *testing.T) string {
+// PostgresDSN returns the conformance DSN, or skips with instructions.
+func PostgresDSN(t *testing.T) string {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		if os.Getenv("TTS_REQUIRE_POSTGRES") != "" {
 			t.Fatal("TTS_REQUIRE_POSTGRES is set but TEST_DATABASE_URL is empty")
 		}
-		t.Skip("postgres tests SKIPPED: TEST_DATABASE_URL unset — run `mise run db:test:setup`")
+		t.Skip("postgres conformance SKIPPED: TEST_DATABASE_URL unset — run `mise run db:test:setup`")
 	}
 	return dsn
 }
 
-// tempSchemaDSN creates a throwaway schema and returns a DSN pinned to it, so
+// TempSchemaDSN creates a throwaway schema and returns a DSN pinned to it, so
 // migrations, the goose version table and every row land inside it and vanish on
-// cleanup. Isolation is per-schema rather than per-database because CREATE
-// DATABASE serializes on the template and costs 100ms+ each; a schema is cheap
-// enough to do per test.
-func tempSchemaDSN(t *testing.T) string {
+// cleanup.
+//
+// Isolation is per-schema rather than per-database because CREATE DATABASE
+// serializes on the template and costs 100ms+ each; a schema is cheap enough to
+// do per test. It is not transaction-rollback either: the implementations open
+// their own transactions, and rolling back around them would hide the FOR UPDATE
+// behavior that is the single most important thing being tested.
+func TempSchemaDSN(t *testing.T, base string) string {
 	t.Helper()
-	base := postgresDSN(t)
 
 	admin, err := sql.Open("pgx", base)
 	if err != nil {
@@ -51,7 +61,7 @@ func tempSchemaDSN(t *testing.T) string {
 		if os.Getenv("TTS_REQUIRE_POSTGRES") != "" {
 			t.Fatalf("TTS_REQUIRE_POSTGRES is set but %s is unreachable: %v", base, err)
 		}
-		t.Skipf("postgres tests SKIPPED: %s unreachable (%v) — run `mise run db:start`", base, err)
+		t.Skipf("postgres conformance SKIPPED: %s unreachable (%v) — run `mise run db:start`", base, err)
 	}
 
 	name := schemaName(t.Name(), schemaCounter.Add(1))
@@ -59,8 +69,8 @@ func tempSchemaDSN(t *testing.T) string {
 		admin.Close()
 		t.Fatalf("create schema %s: %v", name, err)
 	}
-	// Registered before the store's own Cleanup, so it runs after it: dropping a
-	// schema blocks on any open connection still using it.
+	// Registered here, so it runs *after* the caller's own store-closing
+	// cleanup: DROP SCHEMA blocks on any connection still using it.
 	t.Cleanup(func() {
 		defer admin.Close()
 		if _, err := admin.Exec(`DROP SCHEMA IF EXISTS ` + name + ` CASCADE`); err != nil {
@@ -73,7 +83,7 @@ func tempSchemaDSN(t *testing.T) string {
 		sep = "&"
 	}
 	// pgx forwards unrecognized DSN keys as startup runtime parameters, so this
-	// pins the connection's search_path without a libpq-style options= string.
+	// pins search_path without a libpq-style options= string.
 	return base + sep + "search_path=" + name
 }
 
@@ -90,15 +100,4 @@ func schemaName(testName string, n int64) string {
 		}
 	}
 	return fmt.Sprintf("%.40s_%d", b.String(), n)
-}
-
-// openTempSchema opens a store in its own throwaway schema.
-func openTempSchema(t *testing.T) *Store {
-	t.Helper()
-	s, err := Open(tempSchemaDSN(t))
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
-	return s
 }

@@ -1,6 +1,6 @@
 # Shared conformance suite over both backends
 
-Status: ready-for-agent
+Status: done (2026-08-10)
 Type: task
 Created: 2026-08-10
 
@@ -151,3 +151,37 @@ This issue *is* tests. Its own acceptance:
   `store/sqlite/wordle_test.go`
 - The lock path under test: `store/postgres/points.go` (`lockAccount`, `Spend`, `Transfer`)
 - Test-helper precedent: `server/overlay_test.go` (`newTestOverlayServer`, `readSSEEvent`)
+
+## Comments
+
+**2026-08-10 — shipped.**
+
+`store/storetest` with the 17 behavioral cases and 4 concurrency cases, run from
+`store/sqlite/conformance_test.go` (always) and `store/postgres/conformance_test.go` (skips without
+the DSN). The bodies moved out of `store/sqlite/{store,points,wordle}_test.go`, which are now
+deleted or reduced to the genuinely SQLite-specific parts: `openTemp`, the `_txlock` concurrent-spend
+smoke test, and the legacy-fixture migration tests.
+
+Added a fourth concurrency case beyond the three specified — `ConcurrentGrantAndSpendNeverGoesNegative`.
+`Grant`'s claw-back clamps at the balance it read, so it has the same lost-update exposure `Spend`
+does and deserved its own case.
+
+**The suite can fail.** Four sabotages, each reverted after:
+
+| Sabotage | Caught by | How it read |
+|---|---|---|
+| Unsort `Transfer`'s lock acquisition | `BidirectionalTransfersDoNotDeadlock` | hung; the 30s guard fired |
+| Drop `WHERE ref IS NOT NULL` from `Credit`'s conflict target | `CreditIdempotentRef` | `SQLSTATE 42P10`, at runtime |
+| Remove `lockAccount` from `Spend` | `ConcurrentSpendCannotOverdraw` | **14 of 20 spends won against 100 marks; final balance −40** |
+| Drop `COLLATE "C"` | `LeaderboardOrderAndTieBreak` + `CommandListSorted` | `[Zoe amy Bea]` instead of `[Zoe Bea amy]` |
+
+The third one is the whole reason this epic bothered with `accounts`: without the row lock, real
+currency goes negative under ordinary contention, and nothing else in the suite notices.
+
+`CommandListSorted` and `LeaderboardOrderAndTieBreak` deliberately use names that diverge under
+`en_US.UTF-8` (`amy` vs `Bea`, `so_cool` vs `socials`/`SOCIALS`). A case-uniform fixture would have
+passed with the collation broken.
+
+All four modes verified: no DSN → green with Postgres skipped; `TTS_REQUIRE_POSTGRES=1` + DSN →
+green, 21 cases on Postgres and 17 on SQLite; `TTS_REQUIRE_POSTGRES=1` without a DSN → fails loudly;
+`go test -race ./store/...` clean on both.

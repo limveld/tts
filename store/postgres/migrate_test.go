@@ -1,6 +1,10 @@
 package postgres
 
-import "testing"
+import (
+	"testing"
+
+	"tts/store/storetest"
+)
 
 // wantSchemaVersion is the highest migration in migrations/. It must stay in step
 // with store/sqlite's — the two dialects are meant to describe the same schema,
@@ -18,7 +22,7 @@ func schemaVersion(t *testing.T, s *Store) int64 {
 }
 
 func TestMigrateFreshSchema(t *testing.T) {
-	dsn := tempSchemaDSN(t)
+	dsn := storetest.TempSchemaDSN(t, storetest.PostgresDSN(t))
 
 	s, err := Open(dsn)
 	if err != nil {
@@ -53,7 +57,7 @@ func TestMigrateFreshSchema(t *testing.T) {
 }
 
 func TestMigrateIsIdempotent(t *testing.T) {
-	dsn := tempSchemaDSN(t)
+	dsn := storetest.TempSchemaDSN(t, storetest.PostgresDSN(t))
 
 	s, err := Open(dsn)
 	if err != nil {
@@ -81,7 +85,11 @@ func TestMigrateIsIdempotent(t *testing.T) {
 // inserts explicit ids so ledger row ids survive the cutover copy. With ALWAYS
 // this insert fails, and it would fail for the first time during the cutover.
 func TestLedgerIdentityAcceptsExplicitIDs(t *testing.T) {
-	s := openTempSchema(t)
+	s, err := Open(storetest.TempSchemaDSN(t, storetest.PostgresDSN(t)))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
 
 	if _, err := s.db.Exec(
 		`INSERT INTO ledger (id, user_id, delta, reason, ts) VALUES (9000, 'u1', 5, 'copy', 1)`); err != nil {
