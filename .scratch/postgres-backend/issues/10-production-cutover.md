@@ -1,6 +1,6 @@
 # Execute the production cutover
 
-Status: ready-for-agent
+Status: ready-for-human — code complete, runbook not executed
 Type: task
 Created: 2026-08-10
 
@@ -105,3 +105,43 @@ Live, from the runbook — steps 6, 8 and 10 are the acceptance criteria:
 - Startup order that must still hold: `bot/main.go:71-75, 141` (depth push → wordle → connections →
   economy → `loadGamble`)
 - `deploy/service.sh`, `~/Library/Logs/tts-bot.{out,err}.log`
+
+## Comments
+
+**2026-08-10 — issues 01–09 shipped; this one is yours to run.**
+
+The code is done and proven. This issue is deliberately *not* executed: it needs the stream offline,
+no round open, and live chat smoke tests. What follows is the runbook adjusted to what actually
+landed.
+
+### Adjustments to the steps above
+
+- **Postgres 18, not 17.** `mise run db:install` pins `postgresql@18`, which is what this Mac already
+  runs.
+- **`mise run test:all`** is the green-before-you-start check (step 1). It defaults
+  `TEST_DATABASE_URL` to `postgres:///tts_test` and fails if Postgres is down.
+- **`mise run db:rollback`** exists — it is `store-migrate -from "$TTS_DATABASE_URL" -to bot.db
+  -force` with the verification, i.e. the third row of the rollback table.
+- Step 7's flip is `mise run bot:service:install` (which bakes `TTS_DATABASE_URL` into the plist)
+  then `mise run bot:service:restart`. `service.sh` warns but does not block if Postgres is down.
+
+### Already exercised against the real data (on copies, never the live file)
+
+- A `VACUUM INTO` copy of `bot.db` migrates cleanly to schema 2: 16,864 ledger rows intact,
+  `settings` down from 6 rows to 3 as the three `*_round` keys move out, `game_rounds` empty
+  (correct — all three live round values are `''`, i.e. finished).
+- A full copy into Postgres verifies: **114/114 balances match, sum(delta) 20,089 == 20,089, counts
+  match, leaderboard top-50 identical**, ledger sequence at 16,865.
+- The reverse direction (Postgres → a fresh SQLite file) verifies identically.
+- A `pg_dump -Fc` of that database was restored into a scratch database and verified.
+
+So step 6's numbers are known in advance: **3 commands · 114 users · 16,864 ledger · 3 settings ·
+5 wordle_wins · 1 connections_wins · 0 game_rounds · sum(delta) 20,089 · max id 16,864 · sequence
+16,865.** Anything else means something changed between now and the cutover, which is worth
+understanding before continuing.
+
+### Still yours
+
+Steps 1–2 (stream offline, no round open, stop the bot), 3 (archive — **`VACUUM INTO`, never `cp`**),
+7 (flip), 8 (live chat smoke tests), 9 (watch the logs through a stream), 10 (`mise run
+db:backup:install` and restore one by hand), 11 (after the soak).
