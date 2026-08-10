@@ -1,22 +1,16 @@
-package store
+package sqlite
 
 import (
 	"database/sql"
 	"time"
+
+	"tts/store"
 )
 
 // The loyalty-points ("marks") economy is an append-only ledger: every accrual,
 // conversion, spend, gamble, and transfer is one signed row, and a balance is
 // SUM(delta). A small users table maps the stable Twitch user_id to a current
 // login/display so leaderboards and "@name" lookups can show names.
-
-// LedgerEntry is one leaderboard row (a user_id's summed balance with its name).
-type LedgerEntry struct {
-	UserID  string
-	Login   string
-	Display string
-	Balance int64
-}
 
 // UpsertUser records/refreshes a user's identity (called whenever we see them in
 // chat or in Get Chatters), so names stay current across renames.
@@ -182,7 +176,7 @@ func (s *Store) Transfer(fromID, toID string, amount int64, reason string) (ok b
 
 // Leaderboard returns the top n users by balance (descending), joined to their
 // current names. Users with no name row are omitted.
-func (s *Store) Leaderboard(n int) ([]LedgerEntry, error) {
+func (s *Store) Leaderboard(n int) ([]store.LedgerEntry, error) {
 	rows, err := s.db.Query(
 		// GROUP BY names every selected non-aggregate column and HAVING repeats the
 		// aggregate rather than referencing the "bal" alias: SQLite tolerates both
@@ -198,9 +192,9 @@ func (s *Store) Leaderboard(n int) ([]LedgerEntry, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []LedgerEntry
+	var out []store.LedgerEntry
 	for rows.Next() {
-		var e LedgerEntry
+		var e store.LedgerEntry
 		if err := rows.Scan(&e.UserID, &e.Login, &e.Display, &e.Balance); err != nil {
 			return nil, err
 		}

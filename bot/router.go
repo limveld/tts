@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"tts/store"
+	"tts/store/sqlite"
 )
 
 // Commands holds the configurable chat command words (all lowercase).
@@ -34,8 +34,8 @@ type Router struct {
 	notifyCooldown *Cooldown
 	sanitize       func(text string) (string, bool) // wraps Clean with blocklist+maxChars
 	tts            TTS
-	chat           Chat         // may be nil when the bot isn't authenticated (replies disabled)
-	store          *store.Store // custom commands + marks economy (may be nil → both disabled)
+	chat           Chat          // may be nil when the bot isn't authenticated (replies disabled)
+	store          *sqlite.Store // custom commands + marks economy (may be nil → both disabled)
 	logger         *log.Logger
 
 	// rnd is shared by the (sequential) IRC handler and by game timers firing on

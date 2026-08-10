@@ -1,26 +1,19 @@
-// Package store persists the bot's chat-managed data in a local SQLite database
-// (modernc.org/sqlite — pure Go, no CGo). Stage 2 holds custom commands; later
-// stages (loyalty points) add tables to the same DB.
-package store
+// Package sqlite is the SQLite implementation of the bot's store
+// (modernc.org/sqlite — pure Go, no CGo). It is the default backend: no daemon,
+// one file, and the fast hermetic choice for tests. The domain types it reads
+// and writes live in the parent store package.
+package sqlite
 
 import (
 	"database/sql"
 
 	_ "modernc.org/sqlite"
+
+	"tts/store"
 )
 
-// Command is one chat-managed custom command. Name is without the leading "!"
-// and lowercased. Cooldown is a global per-command cooldown in seconds; MinRole
-// is everyone|sub|vip|mod.
-type Command struct {
-	Name     string
-	Response string
-	Cooldown int
-	MinRole  string
-	Count    int
-}
-
-// Store wraps the SQLite database.
+// Store is a SQLite-backed store: one file holding custom commands, the marks
+// ledger, settings and the game tallies.
 type Store struct {
 	db *sql.DB
 }
@@ -54,7 +47,7 @@ func Open(path string) (*Store, error) {
 			count    INTEGER NOT NULL DEFAULT 0
 		)`,
 		// Stage 3 loyalty-points ("marks") economy: an identity table and an
-		// append-only ledger (balance = SUM(delta)). See store/points.go.
+		// append-only ledger (balance = SUM(delta)). See points.go.
 		`CREATE TABLE IF NOT EXISTS users (
 			user_id   TEXT PRIMARY KEY,
 			login     TEXT NOT NULL,
@@ -78,7 +71,7 @@ func Open(path string) (*Store, error) {
 			key   TEXT PRIMARY KEY,
 			value TEXT NOT NULL
 		)`,
-		// Wordle win tally (one row per solver). See store/wordle.go.
+		// Wordle win tally (one row per solver). See wordle.go.
 		`CREATE TABLE IF NOT EXISTS wordle_wins (
 			user_id TEXT PRIMARY KEY,
 			login   TEXT NOT NULL,
@@ -86,7 +79,7 @@ func Open(path string) (*Store, error) {
 			wins    INTEGER NOT NULL DEFAULT 0
 		)`,
 		// Connections completion tally (one row per player who landed the final
-		// group of a puzzle). See store/connections.go.
+		// group of a puzzle). See connections.go.
 		`CREATE TABLE IF NOT EXISTS connections_wins (
 			user_id TEXT PRIMARY KEY,
 			login   TEXT NOT NULL,
@@ -107,23 +100,23 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // Get returns the command by name; ok is false if it doesn't exist.
-func (s *Store) Get(name string) (Command, bool, error) {
-	var c Command
+func (s *Store) Get(name string) (store.Command, bool, error) {
+	var c store.Command
 	err := s.db.QueryRow(
 		`SELECT name, response, cooldown, min_role, count FROM commands WHERE name = ?`, name,
 	).Scan(&c.Name, &c.Response, &c.Cooldown, &c.MinRole, &c.Count)
 	if err == sql.ErrNoRows {
-		return Command{}, false, nil
+		return store.Command{}, false, nil
 	}
 	if err != nil {
-		return Command{}, false, err
+		return store.Command{}, false, err
 	}
 	return c, true, nil
 }
 
 // Add inserts a command. created is false (no error) if a command with that name
 // already exists — the caller reports "already exists".
-func (s *Store) Add(c Command) (created bool, err error) {
+func (s *Store) Add(c store.Command) (created bool, err error) {
 	if c.MinRole == "" {
 		c.MinRole = "everyone"
 	}

@@ -10,7 +10,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"tts/store"
+	"tts/store/sqlite"
 	"tts/twitch"
 )
 
@@ -155,7 +155,7 @@ type TwitchAPI interface {
 // roomID returns the channel's broadcaster id (the numeric room-id from chat
 // tags), "" until a message has been seen.
 type Economy struct {
-	store  *store.Store
+	store  *sqlite.Store
 	api    TwitchAPI
 	cfg    EconomyConfig
 	roomID func() string
@@ -165,7 +165,7 @@ type Economy struct {
 	convDisabled bool   // set if the channel can't have channel points
 }
 
-func NewEconomy(st *store.Store, api TwitchAPI, cfg EconomyConfig, roomID func() string, logger *log.Logger) *Economy {
+func NewEconomy(st *sqlite.Store, api TwitchAPI, cfg EconomyConfig, roomID func() string, logger *log.Logger) *Economy {
 	return &Economy{store: st, api: api, cfg: cfg, roomID: roomID, logger: logger}
 }
 

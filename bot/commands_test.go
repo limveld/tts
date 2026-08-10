@@ -8,11 +8,12 @@ import (
 	"testing"
 
 	"tts/store"
+	"tts/store/sqlite"
 )
 
-func newCmdRouter(t *testing.T, tts TTS, chat Chat) (*Router, *store.Store) {
+func newCmdRouter(t *testing.T, tts TTS, chat Chat) (*Router, *sqlite.Store) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

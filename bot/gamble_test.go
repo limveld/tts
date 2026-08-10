@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"tts/store"
+	"tts/store/sqlite"
 )
 
 // The gamble tests drive resolveGamble/flushJoins directly instead of waiting on
@@ -237,7 +237,7 @@ func crashGamble(r *Router, remaining time.Duration) {
 
 // rebootRouter builds a fresh router over an existing store: same durable ledger
 // and settings, brand-new in-memory state. This is the bot coming back up.
-func rebootRouter(t *testing.T, st *store.Store) (*Router, *fakeChat, *fakeOverlay) {
+func rebootRouter(t *testing.T, st *sqlite.Store) (*Router, *fakeChat, *fakeOverlay) {
 	t.Helper()
 	r, _, _, chat := econRouter(t)
 	r.store = st
@@ -247,7 +247,7 @@ func rebootRouter(t *testing.T, st *store.Store) (*Router, *fakeChat, *fakeOverl
 }
 
 // persistedRound decodes the stored round, or reports that none is stored.
-func persistedRound(t *testing.T, st *store.Store) (gambleRec, bool) {
+func persistedRound(t *testing.T, st *sqlite.Store) (gambleRec, bool) {
 	t.Helper()
 	v, ok, err := st.GetSetting(gambleSettingKey)
 	if err != nil {
@@ -455,7 +455,7 @@ func TestGambleRefundIsIdempotent(t *testing.T) {
 // the next boot can retry the same ledger ref.
 func TestGamblePayoutErrorKeepsRoundPersisted(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "g.db")
-	st, err := store.Open(dbPath)
+	st, err := sqlite.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,7 +477,7 @@ func TestGamblePayoutErrorKeepsRoundPersisted(t *testing.T) {
 		t.Fatalf("no chat line for the failed payout; last=%q", lastSend(chat))
 	}
 
-	st2, err := store.Open(dbPath)
+	st2, err := sqlite.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

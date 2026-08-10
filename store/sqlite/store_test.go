@@ -1,9 +1,11 @@
-package store
+package sqlite
 
 import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"tts/store"
 )
 
 func openTemp(t *testing.T) *Store {
@@ -19,12 +21,12 @@ func openTemp(t *testing.T) *Store {
 func TestCommandCRUD(t *testing.T) {
 	s := openTemp(t)
 
-	created, err := s.Add(Command{Name: "discord", Response: "join $user", Cooldown: 5})
+	created, err := s.Add(store.Command{Name: "discord", Response: "join $user", Cooldown: 5})
 	if err != nil || !created {
 		t.Fatalf("Add discord: created=%v err=%v", created, err)
 	}
 	// Duplicate add: not created, no error.
-	if created, err := s.Add(Command{Name: "discord", Response: "other"}); err != nil || created {
+	if created, err := s.Add(store.Command{Name: "discord", Response: "other"}); err != nil || created {
 		t.Fatalf("Add duplicate: created=%v err=%v want false/nil", created, err)
 	}
 
@@ -54,7 +56,7 @@ func TestCommandCRUD(t *testing.T) {
 		t.Error("SetResponse nope: want found=false")
 	}
 
-	if _, err := s.Add(Command{Name: "socials", Response: "x"}); err != nil {
+	if _, err := s.Add(store.Command{Name: "socials", Response: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	names, err := s.List()

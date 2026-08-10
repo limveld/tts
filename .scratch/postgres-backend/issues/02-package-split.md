@@ -1,6 +1,6 @@
 # Package split: store becomes types-only, impl moves to store/sqlite
 
-Status: ready-for-agent
+Status: done (2026-08-10)
 Type: task
 Created: 2026-08-10
 
@@ -80,3 +80,16 @@ store/                          store/
 
 - `store/store.go`, `store/points.go`, `store/settings.go`, `store/wordle.go`, `store/connections.go`
 - Importers: `bot/main.go`, `bot/router.go`, `bot/economy.go`, `bot/commands.go`
+
+## Comments
+
+**2026-08-10 — shipped.**
+
+`store/types.go` holds `Command`, `LedgerEntry`, `WordleWin`, `ConnectionsWin` and a package doc
+explaining the type-only rule and why there is no `store.Open` factory. The five implementation
+files and the three test files moved with `git mv`, so `git log --follow` sees through it.
+
+Importer split came out as expected: `bot/router.go` and `bot/economy.go` need only
+`tts/store/sqlite` (their remaining `store.` hits are the `r.store.`/`e.store.` *field*, not the
+package); `bot/main.go` and `bot/commands_test.go` need both; `bot/commands.go` keeps only
+`tts/store`. `go mod tidy` promoted `modernc.org/sqlite` to a direct requirement.

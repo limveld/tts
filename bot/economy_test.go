@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"tts/store"
+	"tts/store/sqlite"
 	"tts/twitch"
 )
 
@@ -45,9 +45,9 @@ func (f *fakeAPI) FulfillRedemptions(_ context.Context, _, _ string, ids []strin
 	return nil
 }
 
-func testEconomy(t *testing.T, api TwitchAPI) (*Economy, *store.Store) {
+func testEconomy(t *testing.T, api TwitchAPI) (*Economy, *sqlite.Store) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "e.db"))
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "e.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

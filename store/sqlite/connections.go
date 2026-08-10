@@ -1,17 +1,12 @@
-package store
+package sqlite
+
+import "tts/store"
 
 // Connections completion tally: one row per player who has landed the final
 // group of a puzzle, with their current name for the !connectionswins
 // leaderboard. Per-group solves pay marks via the ledger but aren't tallied
 // here — this table counts full completions only. The current-round board state
 // is stored separately as JSON in the settings table (owned by the bot).
-
-// ConnectionsWin is one leaderboard row.
-type ConnectionsWin struct {
-	Login   string
-	Display string
-	Wins    int
-}
 
 // ConnectionsAddWin increments a completer's tally (creating the row on first
 // completion), refreshing their name, and returns the new total.
@@ -31,7 +26,7 @@ func (s *Store) ConnectionsAddWin(userID, login, display string) (wins int, err 
 }
 
 // ConnectionsLeaderboard returns the top n completers by count (descending).
-func (s *Store) ConnectionsLeaderboard(n int) ([]ConnectionsWin, error) {
+func (s *Store) ConnectionsLeaderboard(n int) ([]store.ConnectionsWin, error) {
 	rows, err := s.db.Query(
 		`SELECT login, display, wins FROM connections_wins
 		 WHERE wins > 0
@@ -41,9 +36,9 @@ func (s *Store) ConnectionsLeaderboard(n int) ([]ConnectionsWin, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ConnectionsWin
+	var out []store.ConnectionsWin
 	for rows.Next() {
-		var w ConnectionsWin
+		var w store.ConnectionsWin
 		if err := rows.Scan(&w.Login, &w.Display, &w.Wins); err != nil {
 			return nil, err
 		}
