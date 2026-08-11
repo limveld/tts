@@ -11,11 +11,11 @@ import (
 // nothing else, because a case that reaches for a column is testing an
 // implementation rather than a behavior.
 //
-// This one has to: accounts.balance is a materialized total that no interface
-// method exposes, and the whole point of migration 00003 is to prove it agrees
-// with SUM(ledger) before any read path starts trusting it. There is no way to
-// assert "these two representations of the same number match" through an API
-// that only ever returns one of them.
+// These have to. accounts.balance is a materialized total that no interface
+// method exposes, and there is no way to assert "these two representations of
+// the same number match" through an API that only ever returns one of them.
+// Likewise there is no API for "make this history go away", which is what
+// retention does and what the ref-idempotency case has to simulate.
 
 // NewWithDB builds an isolated store and hands back a handle to the same
 // database. Only the invariant suite gets one.
@@ -30,6 +30,7 @@ func RunInvariants(t *testing.T, newStore NewWithDB) {
 	}{
 		{"MaterializedBalanceMatchesLedger", testMaterializedBalanceMatchesLedger},
 		{"EveryLedgerUserHasAnAccountRow", testEveryLedgerUserHasAnAccountRow},
+		{"CreditRefSurvivesItsLedgerRow", testCreditRefSurvivesItsLedgerRow},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -114,6 +115,47 @@ func testEveryLedgerUserHasAnAccountRow(t *testing.T, s Store, db *sql.DB) {
 		t.Errorf("%d users have ledger rows but no accounts row", missing)
 	}
 	assertBalancesMatchLedger(t, db)
+}
+
+// Idempotency is a property of the redemption id, not of the ledger row it
+// produced. Retention drops old ledger rows, so if the guarantee still lived on
+// the ledger — as the ledger_ref unique index — every aged-out redemption would
+// silently re-arm and could be credited a second time.
+//
+// The delete here stands in for a dropped partition. It is the one case in this
+// suite that reaches past the contract, because there is no API for "make this
+// history go away" and the bug is invisible without it.
+func testCreditRefSurvivesItsLedgerRow(t *testing.T, s Store, db *sql.DB) {
+	if err := s.UpsertUser("u1", "bob", "Bob"); err != nil {
+		t.Fatal(err)
+	}
+	credited, err := s.Credit("u1", 250, "redemption", "redeem-1")
+	if err != nil || !credited {
+		t.Fatalf("first credit: credited=%v err=%v want true/nil", credited, err)
+	}
+	before, err := s.Balance("u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.Exec(`DELETE FROM ledger WHERE ref = 'redeem-1'`); err != nil {
+		t.Fatalf("aging out the ledger row: %v", err)
+	}
+
+	credited, err = s.Credit("u1", 250, "redemption", "redeem-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credited {
+		t.Error("a redemption id was credited twice after its ledger row aged out")
+	}
+	after, err := s.Balance("u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("balance moved on a repeat redemption: %d -> %d", before, after)
+	}
 }
 
 // assertBalancesMatchLedger reports every user whose materialized balance

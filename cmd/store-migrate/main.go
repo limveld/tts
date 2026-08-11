@@ -50,11 +50,14 @@ var tables = []struct {
 	{"commands", []string{"name", "response", "cooldown", "min_role", "count"}},
 	{"users", []string{"user_id", "login", "display", "last_seen"}},
 	{"accounts", []string{"user_id", "created_at", "updated_at", "balance"}},
+	{"ledger_refs", []string{"ref", "user_id", "ts"}},
+	{"ledger_opening", []string{"user_id", "delta", "through_ts"}},
 	{"ledger", []string{"id", "user_id", "delta", "reason", "ref", "ts"}},
 	{"settings", []string{"key", "value"}},
 	{"wordle_wins", []string{"user_id", "login", "display", "wins"}},
 	{"connections_wins", []string{"user_id", "login", "display", "wins"}},
 	{"game_rounds", []string{"game", "room_id", "ends_at", "state", "updated_at"}},
+	{"ledger_folded", []string{"name", "from_ts", "through_ts", "rows", "delta", "folded_at"}},
 }
 
 // games must match bot/rounds.go's constants. A round left behind at cutover is

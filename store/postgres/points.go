@@ -154,37 +154,36 @@ func (s *Store) Credit(userID string, amount int64, reason, ref string) (credite
 	}
 	defer tx.Rollback()
 
-	if ref == "" {
-		if err := ensureAccount(ctx, tx, userID, now); err != nil {
+	var refVal any
+	if ref != "" {
+		refVal = ref
+		// ledger_refs, not the ledger, is what decides whether this redemption has
+		// already been applied. The guarantee is about the redemption id and has to
+		// outlive the ledger row, which retention can drop.
+		//
+		// Under concurrency this blocks rather than races: INSERT ... ON CONFLICT DO
+		// NOTHING against a key held by an *uncommitted* transaction waits on the
+		// speculative-insertion token, then takes the DO NOTHING path if that
+		// transaction committed or inserts if it rolled back. So of N goroutines
+		// racing one ref, exactly one sees n=1.
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO ledger_refs (ref, user_id, ts) VALUES ($1, $2, $3)
+			 ON CONFLICT (ref) DO NOTHING`, ref, userID, now)
+		if err != nil {
 			return false, err
 		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO ledger (user_id, delta, reason, ref, ts) VALUES ($1, $2, $3, NULL, $4)`,
-			userID, amount, reason, now); err != nil {
-			return false, err
+		if n, _ := res.RowsAffected(); n == 0 {
+			// Already applied. Nothing was written, so the deferred Rollback is the
+			// whole cleanup — and crucially no delta is applied to the balance.
+			return false, nil
 		}
-		if err := applyDelta(ctx, tx, userID, amount, now); err != nil {
-			return false, err
-		}
-		return true, tx.Commit()
-	}
-
-	// The conflict target has to repeat the partial index's predicate, or
-	// Postgres cannot infer which index to use and the statement fails at
-	// runtime rather than at parse time.
-	res, err := tx.ExecContext(ctx,
-		`INSERT INTO ledger (user_id, delta, reason, ref, ts) VALUES ($1, $2, $3, $4, $5)
-		 ON CONFLICT (ref) WHERE ref IS NOT NULL DO NOTHING`,
-		userID, amount, reason, ref, now)
-	if err != nil {
-		return false, err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		// Already applied. Nothing was written, so the deferred Rollback is the
-		// whole cleanup — and crucially no delta is applied to the balance.
-		return false, nil
 	}
 	if err := ensureAccount(ctx, tx, userID, now); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO ledger (user_id, delta, reason, ref, ts) VALUES ($1, $2, $3, $4, $5)`,
+		userID, amount, reason, refVal, now); err != nil {
 		return false, err
 	}
 	// Last, so the row lock this takes is held for as little of the transaction

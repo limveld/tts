@@ -94,12 +94,6 @@ func (s *Store) Balance(userID string) (int64, error) {
 // other non-idempotent credits.
 // It is a transaction so the ledger row and the balance commit together.
 func (s *Store) Credit(userID string, amount int64, reason, ref string) (credited bool, err error) {
-	var refVal any
-	query := `INSERT INTO ledger (user_id, delta, reason, ref, ts) VALUES (?, ?, ?, ?, ?)`
-	if ref != "" {
-		refVal = ref
-		query = `INSERT OR IGNORE INTO ledger (user_id, delta, reason, ref, ts) VALUES (?, ?, ?, ?, ?)`
-	}
 	now := time.Now().Unix()
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -107,15 +101,29 @@ func (s *Store) Credit(userID string, amount int64, reason, ref string) (credite
 	}
 	defer tx.Rollback()
 
-	res, err := tx.Exec(query, userID, amount, reason, refVal, now)
-	if err != nil {
-		return false, err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		// The ref was already applied. Nothing written, no delta applied.
-		return false, nil
+	var refVal any
+	if ref != "" {
+		refVal = ref
+		// ledger_refs, not the ledger, decides whether this redemption has already
+		// been applied — the guarantee is about the redemption id and has to
+		// outlive the ledger row.
+		res, err := tx.Exec(
+			`INSERT OR IGNORE INTO ledger_refs (ref, user_id, ts) VALUES (?, ?, ?)`,
+			ref, userID, now)
+		if err != nil {
+			return false, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			// Already applied. Nothing written, no delta applied.
+			return false, nil
+		}
 	}
 	if err := ensureAccount(tx, userID, now); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO ledger (user_id, delta, reason, ref, ts) VALUES (?, ?, ?, ?, ?)`,
+		userID, amount, reason, refVal, now); err != nil {
 		return false, err
 	}
 	if err := applyDelta(tx, userID, amount, now); err != nil {
