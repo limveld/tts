@@ -1,6 +1,8 @@
 # PRD: Ledger retention — a materialized balance and a partitioned ledger
 
-Status: in progress — ADR written, issues 01–08 filed
+Status: in progress — issues 01–04 shipped (2026-08-11);
+[05](issues/05-gopartman-provisioning.md) is ready-for-human and blocking 06–08
+(gopartman ships no LICENSE, so the dependency cannot be taken yet)
 Type: prd
 Created: 2026-08-11
 

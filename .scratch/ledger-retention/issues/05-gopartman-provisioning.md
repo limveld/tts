@@ -1,6 +1,6 @@
 # Add gopartman; cmd/pg-partition provisioning half
 
-Status: ready-for-agent
+Status: ready-for-human — blocked on a LICENSE upstream (see Prerequisite)
 Type: task
 Created: 2026-08-11
 
@@ -11,11 +11,24 @@ PRD: [`../PRD.md`](../PRD.md) · Depends on: 04 · Unblocks: 06
 Add the dependency and build the half of `cmd/pg-partition` that creates partitions. No fold, no
 drop, nothing destructive — this issue can only ever add tables.
 
-## Prerequisite
+## Prerequisite — BLOCKING, needs a human
 
-**gopartman has no LICENSE file.** That is why pkg.go.dev renders no documentation for it, and
-strictly it means no grant of rights to use it. Add one upstream (it is our repo) before taking the
-dependency here. One commit, and it un-breaks `go doc`.
+**`github.com/jirevwe/gopartman` ships no LICENSE file**, at `v0.1.0` or on `main`. Verified
+2026-08-11:
+
+- the module zip for `v0.1.0` contains no `LICENSE`/`LICENCE`/`COPYING`
+- `GET /repos/jirevwe/gopartman/license` returns 404
+- pkg.go.dev renders no documentation, citing the license
+
+Absent a license, the default is exclusive copyright: no grant to use, copy or redistribute. That
+is a licensing problem, not a paperwork one, and it does not go away because the repo is ours — the
+`tts` repo would be vendoring code it has no stated right to vendor.
+
+**The fix is one commit in the other repository** (add a `LICENSE`, then cut `v0.1.1` or re-tag),
+and it has to be done by a human with push access there. Everything below is written and waiting.
+
+Nothing in this epic before this issue depends on gopartman, so migrations `00003`–`00005` and all
+of their tests are already shipped and green. Issues 06–08 all sit behind this one.
 
 ## Decisions
 
