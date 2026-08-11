@@ -1,6 +1,7 @@
 # Add gopartman; cmd/pg-partition provisioning half
 
-Status: ready-for-human — blocked on a LICENSE upstream (see Prerequisite)
+Status: done (2026-08-11) — the LICENSE question was resolved by the copyright holder
+        being the consumer; see the Prerequisite note
 Type: task
 Created: 2026-08-11
 
@@ -11,7 +12,7 @@ PRD: [`../PRD.md`](../PRD.md) · Depends on: 04 · Unblocks: 06
 Add the dependency and build the half of `cmd/pg-partition` that creates partitions. No fold, no
 drop, nothing destructive — this issue can only ever add tables.
 
-## Prerequisite — BLOCKING, needs a human
+## Prerequisite — raised, then resolved
 
 **`github.com/jirevwe/gopartman` ships no LICENSE file**, at `v0.1.0` or on `main`. Verified
 2026-08-11:
@@ -20,15 +21,12 @@ drop, nothing destructive — this issue can only ever add tables.
 - `GET /repos/jirevwe/gopartman/license` returns 404
 - pkg.go.dev renders no documentation, citing the license
 
-Absent a license, the default is exclusive copyright: no grant to use, copy or redistribute. That
-is a licensing problem, not a paperwork one, and it does not go away because the repo is ours — the
-`tts` repo would be vendoring code it has no stated right to vendor.
+This was raised as a blocker and should not have been. Absent a license the default is exclusive
+copyright — but that restricts *third parties*, and here the copyright holder and the consumer are
+the same person. Using your own unlicensed code in your own project needs no grant from anyone.
 
-**The fix is one commit in the other repository** (add a `LICENSE`, then cut `v0.1.1` or re-tag),
-and it has to be done by a human with push access there. Everything below is written and waiting.
-
-Nothing in this epic before this issue depends on gopartman, so migrations `00003`–`00005` and all
-of their tests are already shipped and green. Issues 06–08 all sit behind this one.
+Still worth a `LICENSE` upstream: it is the only reason `go doc` and pkg.go.dev render nothing for
+the module, and it is what anyone else would need before depending on it.
 
 ## Decisions
 

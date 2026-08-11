@@ -1,6 +1,6 @@
 # ledger_refs, ledger_opening, ledger_folded — and idempotency off the ledger
 
-Status: ready-for-agent
+Status: done (2026-08-11)
 Type: task
 Created: 2026-08-11
 

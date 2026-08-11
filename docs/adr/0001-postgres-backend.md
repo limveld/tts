@@ -1,7 +1,11 @@
 # ADR-0001: A Postgres backend beside SQLite, behind consumer-side capability interfaces
 
 Date: 2026-08-10
-Status: Accepted
+Status: Accepted — but "The ledger stays the single source of truth" and "No
+materialized balance" below are **superseded by
+[ADR-0002](0002-ledger-retention-and-partitioning.md)**. Balance now lives on
+`accounts.balance`; the ledger is history that must reconcile to it. The rest of
+this ADR stands.
 
 ## Context
 
@@ -49,6 +53,14 @@ column**: nothing derived means nothing that can drift. It is separate from
 
 **No materialized balance.** At 114 users and ~150 rows each with `ledger_user`
 indexed, the `SUM` is free. Revisit only on profiling.
+
+> **Superseded by [ADR-0002](0002-ledger-retention-and-partitioning.md).** Not by
+> profiling — by partitioning. The `SUM` is free against one indexed table, not
+> across ~370 daily children that `Balance` and `Leaderboard` cannot prune. And a
+> balance derived from history cannot outlive it, which is what retention needs.
+> `accounts` now carries `balance`, and the drift this paragraph was avoiding is
+> answered by a same-transaction write, a conformance test, and a reconcile gate
+> that refuses to drop history until the books add up.
 
 **Migrations are `pressly/goose/v3` used as a library**, over embedded
 per-dialect SQL, through the provider API — never the package-level

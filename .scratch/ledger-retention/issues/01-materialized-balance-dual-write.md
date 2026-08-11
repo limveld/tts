@@ -1,6 +1,6 @@
 # accounts.balance, maintained but not yet read
 
-Status: ready-for-agent
+Status: done (2026-08-11)
 Type: task
 Created: 2026-08-11
 

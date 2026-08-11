@@ -197,3 +197,117 @@ Useful now that rounds are real rows rather than a JSON blob in `settings`:
 SELECT game, room_id, to_timestamp(ends_at/1000) AS ends FROM game_rounds;
 SELECT reason, COUNT(*), SUM(delta) FROM ledger GROUP BY reason ORDER BY 2 DESC;
 ```
+
+## Retention
+
+### Where a balance lives
+
+**`accounts.balance` is what someone has. The ledger is how they got there.**
+
+That split is the whole of this section. It used to be that a balance *was*
+`SUM(ledger)`; it is now a column, written in the same transaction as every
+ledger row by `applyDelta`. The reason is that a balance derived from history
+cannot outlive that history, and the ledger is now expirable — old partitions get
+folded away and dropped, which would silently change a `SUM(ledger)` balance.
+See [ADR-0002](adr/0002-ledger-retention-and-partitioning.md), which reverses
+ADR-0001 on this point.
+
+So the invariant to know, and the first thing to run when someone says their
+marks look wrong:
+
+```sql
+-- Should return no rows, always, on any database at any time.
+SELECT a.user_id, a.balance,
+       COALESCE(o.delta, 0) + COALESCE(l.total, 0) AS derived
+  FROM accounts a
+  LEFT JOIN ledger_opening o ON o.user_id = a.user_id
+  LEFT JOIN (SELECT user_id, SUM(delta) AS total FROM ledger GROUP BY user_id) l
+         ON l.user_id = a.user_id
+ WHERE a.balance <> COALESCE(o.delta, 0) + COALESCE(l.total, 0);
+```
+
+`ledger_opening` is the per-user total of history that has been *dropped*. It is
+not a balance and nothing reads it for money — it exists so the sum above stays
+provable after retention has run.
+
+### What runs, and when
+
+`cmd/pg-partition`, daily at 05:15 under launchd, fifteen minutes after the 05:00
+`pg_dump`. That ordering is a safety property: this job drops ledger partitions,
+and that dump is the only itemized copy of the rows it removes.
+
+```sh
+mise run db:partition:dry       # what a pass would do, changing nothing
+mise run db:partition           # run one now
+mise run db:partition:install   # install the daily agent
+mise run db:partition:status
+mise run db:partition:logs
+```
+
+One pass, in order:
+
+1. **provision** — gopartman creates tomorrow's child table (and 14 days ahead)
+2. **fold** — each partition older than the horizon is `DETACH`ed and its
+   per-user totals added to `ledger_opening`, *in one transaction*
+3. **reconcile** — the query above, for every user
+4. **drop** — the folded partitions, **only if reconcile came back clean**
+
+A dirty reconcile stops the drop and exits non-zero. That is the design: a
+disagreement means either the balance or the history is wrong, and dropping the
+history destroys the evidence of which.
+
+The default horizon is 365 days, the interval is daily. gopartman's own retention
+is disabled (`HookSkip`) — it only ever creates partitions, never removes them,
+because removal has to fold in the same transaction as the detach and a pre-drop
+hook cannot do that.
+
+### Reading the state
+
+```sql
+-- What has been folded away, most recent first.
+SELECT name, to_timestamp(from_ts) AS from, rows, delta,
+       to_timestamp(folded_at) AS folded
+  FROM ledger_folded ORDER BY through_ts DESC LIMIT 10;
+
+-- The partitions that exist.
+SELECT c.relname, pg_get_expr(c.relpartbound, c.oid)
+  FROM pg_class c JOIN pg_inherits i ON i.inhrelid = c.oid
+ WHERE i.inhparent = 'ledger'::regclass ORDER BY c.relname;
+
+-- Should be 0. Anything here arrived on a day with no partition, and retention
+-- cannot see it: only registered bounded partitions are expiry candidates.
+SELECT COUNT(*) FROM ledger_default;
+
+-- Detached orphans: folded but not dropped, because a run died in between.
+-- Invisible to SELECT ... FROM ledger, but still in every pg_dump. The next
+-- pass cleans them up.
+SELECT c.relname FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+ WHERE c.relname LIKE 'ledger_2%'
+   AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid);
+```
+
+### When rows are stranded in `ledger_default`
+
+Two ways it happens: the agent stopped firing for more than 14 days, or a fresh
+`store-migrate` cutover copied history into a database whose `00005` had no data
+to derive children from. **The second one looks exactly like data loss and is
+not** — the rows are all there, in the default partition, they just cannot expire.
+
+```sh
+mise run db:partition:backfill
+```
+
+That creates the missing children and moves the rows into them. It has to detach
+the default partition to do it, because Postgres refuses to create a bounded
+partition while the default holds a row that would belong in it — all in one
+transaction, so a failure leaves the table as it was.
+
+### What is not recoverable
+
+Once a partition is dropped, `ledger_opening` holds a **total**, not an
+itemization. "Why do I have this many marks" is answerable for 365 days and no
+further. The 05:00 dump is the only itemized archive beyond that, and it is
+pruned at 14 days — so in practice, history older than a year is gone. That is
+the trade; nobody's balance changes, but the story behind it stops being
+available.

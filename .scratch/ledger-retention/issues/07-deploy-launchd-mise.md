@@ -1,6 +1,6 @@
 # Deploy: launchd agent at 05:15, service.sh target, mise tasks
 
-Status: ready-for-agent
+Status: done (2026-08-11)
 Type: task
 Created: 2026-08-11
 

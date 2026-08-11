@@ -121,15 +121,70 @@ none of this means anything, and gopartman needs a `pgxpool` while the store is 
 `00002`. SQLite retention does nothing on purpose: it is the dev/test backend, and a money-touching
 prune path that only ever runs in tests is a path that is never really tested.
 
-**Dependencies go from 6 to 7**: `github.com/jirevwe/gopartman`. Recorded explicitly, per ADR-0001's
-convention, so the near-stdlib budget is consciously spent. gopartman declares
-`testcontainers-go/modules/postgres` as a *direct* require even though it is test-only, so `go.sum`
-gains go.mod-only checksums for ~50 modules (moby, OTel, logrus). No Docker code is compiled into
-the bot.
+**Dependencies go from 6 to 7**: `github.com/jirevwe/gopartman` at `v0.1.0`. Recorded explicitly,
+per ADR-0001's convention, so the near-stdlib budget is consciously spent.
+
+The feared module-graph bleed did not materialise. gopartman declares
+`testcontainers-go/modules/postgres` as a *direct* require even though it is test-only, and the
+design note here predicted ~50 extra `go.sum` entries (moby, OTel, logrus). Measured: **`go.sum`
+grew by 7 lines, and contains no testcontainers, moby or OTel entries at all** — Go's module-graph
+pruning keeps a dependency's test-only imports out of the consumer's graph entirely. The runtime
+additions are `pgerrcode` and `oklog/ulid`.
+
+**gopartman ships no LICENSE**, at `v0.1.0` or on `main`. For a third party that would be
+disqualifying — no license means no grant of rights. It is not, here, because the copyright holder
+and the consumer are the same person. Worth fixing upstream anyway: it is why pkg.go.dev renders no
+documentation for the module.
 
 ## Consequences
 
-*(Filled in as the epic lands — see `.scratch/ledger-retention/PRD.md` for current state.)*
+**Good.** Balance and leaderboard reads are single-row lookups on `accounts`, independent of how
+many partitions exist — `Leaderboard` no longer touches `ledger` at all. The ledger is bounded
+without anyone's marks moving: measured on a clone of production, a fold with a 20-day horizon
+removed 7,646 rows across eight partitions and left all 114 balances byte-identical.
+`ledger_refs` fixed a latent bug that predated this work, where dropping an aged-out ledger row
+would silently re-arm its redemption id. And `accounts.balance = ledger_opening + SUM(ledger)` is
+now checked on every nightly run and gates every drop, so the derived value ADR-0001 declined to
+create is one the tooling proves rather than assumes.
+
+**Costs.** A derived value exists and can drift — exactly what ADR-0001 avoided — defended by three
+mechanisms where "no derived value" needed none. Every ledger INSERT now writes three things (the
+row, `ts_at`, the balance) instead of one, and `ts_at`'s relationship to `ts` is enforced by
+convention and a test rather than by the schema, because Postgres permits no other way. A seventh
+dependency, at `v0.1.0`, whose retention path we deliberately do not use: gopartman's entire job
+here is one `CREATE TABLE` per day.
+
+**What the work found that the design missed.** Four things, each of which would have been a
+production bug:
+
+- Partition bounds are `timestamptz` and are read in the session's `TimeZone`, while partition
+  *names* come from UTC dates. On this cluster (`Europe/Malta`) that is a two-hour offset, and rows
+  near midnight UTC leak into the default partition where retention can never reach them.
+- `-dry-run` was not read-only, because `RegisterParent` provisions the whole premake window on
+  the spot rather than merely recording the parent.
+- The advisory lock has to be gopartman's — `hashtext()` evaluated by Postgres, on a held
+  connection — and must *not* wrap `Maintain`, which takes the same lock and silently skips the
+  parent when it cannot get it.
+- Backfill cannot create a bounded partition while the default holds rows for it, so it has to
+  detach the default first, and gopartman's `PartitionData` cannot help because the drain needs
+  partitions that do not yet exist.
+
+**An incident, recorded because it is the useful part.** `cmd/store-migrate` opened its *source*
+with `Open`, which runs migrations. Harmless while migrations were additive; migration `00005`
+rewrites the ledger. So `store-migrate -from postgres:///tts` — the rollback direction, reading
+production — partitioned production as a side effect, on 2026-08-11 at 21:43, leaving the live
+database on schema 5 while the running bot still spoke schema 2 and would have failed every ledger
+write on the next live stream. Data was intact throughout and the bot was rebuilt and restarted.
+The tool now opens sources with `OpenExisting` and fails loudly on a stale one. **The general
+lesson: a migration that rewrites a table turns every incidental `Open` into a deployment.**
+
+**Not delivered.** Retention on SQLite. Archiving folded partitions to a separate schema — they are
+dropped, and the 05:00 dump is the archive. Any query over folded history: once a partition is
+gone, `ledger_opening` holds a total, not an itemization.
+
+**Honored.** ADR-0001's "the bot is sole owner of the database" — `cmd/pg-partition` is a
+maintenance job in `cmd/`, alongside `store-migrate`, not a second writer inside `bot/`. And the
+`store/storetest` contract: every behavioral table exists on both backends.
 
 **Good.** Balance and leaderboard reads become O(1) and partition-count-independent. The ledger
 stops growing without bound, and stops doing so without moving anyone's marks. `ledger_refs` fixes
