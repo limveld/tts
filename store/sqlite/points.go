@@ -7,16 +7,21 @@ import (
 	"tts/store"
 )
 
-// The loyalty-points ("marks") economy is an append-only ledger: every accrual,
-// conversion, spend, gamble, and transfer is one signed row, and a balance is
-// SUM(delta). A small users table maps the stable Twitch user_id to a current
-// login/display so leaderboards and "@name" lookups can show names.
+// The loyalty-points ("marks") economy: every accrual, conversion, spend, gamble
+// and transfer is one signed row in an append-only ledger, and accounts.balance
+// is the running total of those rows. A small users table maps the stable Twitch
+// user_id to a current login/display so leaderboards and "@name" lookups can
+// show names.
 //
-// As of migration 00003 that balance is also materialized on accounts.balance,
-// written by applyDelta in the same transaction as the ledger row it reflects.
-// Nothing reads it yet — the read paths switch over in a later migration, once
-// the conformance suite has proved the column agrees with SUM(ledger). Until
-// then this file maintains a value it does not consume, on purpose.
+// The balance is a column rather than SUM(ledger) because a balance derived from
+// history cannot outlive it, and the Postgres ledger is partitioned with a
+// retention horizon. So: accounts.balance is what someone has, the ledger is how
+// they got there, and applyDelta writes both in one transaction. See
+// docs/adr/0002-ledger-retention-and-partitioning.md.
+//
+// SQLite has no partitions and no retention, so its ledger is never pruned and
+// the invariant is the simple balance == SUM(ledger) — checked on both backends
+// by storetest's invariant suite.
 //
 // 00002 created accounts and said SQLite would never write to it. That is no
 // longer true: the lock it exists for is still unnecessary here (one writer at a
@@ -70,10 +75,16 @@ func (s *Store) ResolveLogin(login string) (userID string, ok bool, err error) {
 	return userID, true, nil
 }
 
-// Balance returns a user's current mark balance (SUM of their ledger deltas).
+// balanceQuery is the one true way to read a balance, shared by Balance and the
+// in-transaction reads so they cannot drift apart. The COALESCE covers a user
+// with no accounts row: "never seen" reads as zero, not as an error.
+const balanceQuery = `SELECT COALESCE((SELECT balance FROM accounts WHERE user_id = ?), 0)`
+
+// Balance returns a user's current mark balance: a single-row lookup on
+// accounts, whatever the ledger has grown to.
 func (s *Store) Balance(userID string) (int64, error) {
 	var bal int64
-	err := s.db.QueryRow(`SELECT COALESCE(SUM(delta), 0) FROM ledger WHERE user_id = ?`, userID).Scan(&bal)
+	err := s.db.QueryRow(balanceQuery, userID).Scan(&bal)
 	return bal, err
 }
 
@@ -130,7 +141,7 @@ func (s *Store) Grant(userID string, delta int64, reason string) (newBal int64, 
 	defer tx.Rollback()
 
 	var bal int64
-	if err := tx.QueryRow(`SELECT COALESCE(SUM(delta), 0) FROM ledger WHERE user_id = ?`, userID).Scan(&bal); err != nil {
+	if err := tx.QueryRow(balanceQuery, userID).Scan(&bal); err != nil {
 		return 0, err
 	}
 	applied := delta
@@ -178,7 +189,7 @@ func (s *Store) Spend(userID string, amount int64, reason string) (ok bool, err 
 	defer tx.Rollback()
 
 	var bal int64
-	if err := tx.QueryRow(`SELECT COALESCE(SUM(delta), 0) FROM ledger WHERE user_id = ?`, userID).Scan(&bal); err != nil {
+	if err := tx.QueryRow(balanceQuery, userID).Scan(&bal); err != nil {
 		return false, err
 	}
 	if bal < amount {
@@ -219,7 +230,7 @@ func (s *Store) Transfer(fromID, toID string, amount int64, reason string) (ok b
 	defer tx.Rollback()
 
 	var bal int64
-	if err := tx.QueryRow(`SELECT COALESCE(SUM(delta), 0) FROM ledger WHERE user_id = ?`, fromID).Scan(&bal); err != nil {
+	if err := tx.QueryRow(balanceQuery, fromID).Scan(&bal); err != nil {
 		return false, err
 	}
 	if bal < amount {
@@ -254,16 +265,15 @@ func (s *Store) Transfer(fromID, toID string, amount int64, reason string) (ok b
 // Leaderboard returns the top n users by balance (descending), joined to their
 // current names. Users with no name row are omitted.
 func (s *Store) Leaderboard(n int) ([]store.LedgerEntry, error) {
+	// No aggregate and no ledger: served by accounts_balance, the partial index on
+	// (balance DESC) WHERE balance > 0. WHERE balance > 0 is the old
+	// HAVING SUM(l.delta) > 0 — an account that never earned anything is 0 and is
+	// excluded either way — and the join still omits users with no identity row.
 	rows, err := s.db.Query(
-		// GROUP BY names every selected non-aggregate column and HAVING repeats the
-		// aggregate rather than referencing the "bal" alias: SQLite tolerates both
-		// shortcuts, Postgres rejects them. ORDER BY may keep the alias — that one
-		// is legal in either dialect.
-		`SELECT l.user_id, u.login, u.display, SUM(l.delta) AS bal
-		 FROM ledger l JOIN users u ON u.user_id = l.user_id
-		 GROUP BY l.user_id, u.login, u.display
-		 HAVING SUM(l.delta) > 0
-		 ORDER BY bal DESC, u.display ASC
+		`SELECT a.user_id, u.login, u.display, a.balance
+		 FROM accounts a JOIN users u ON u.user_id = a.user_id
+		 WHERE a.balance > 0
+		 ORDER BY a.balance DESC, u.display ASC
 		 LIMIT ?`, n)
 	if err != nil {
 		return nil, err

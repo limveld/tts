@@ -68,19 +68,35 @@ func verify(out *os.File, src, dst migrateStore, dstBackend store.Backend) error
 
 	// Ledger totals: catches a copy that moved the right number of rows with the
 	// wrong values in them.
-	srcSum, srcMax, err := ledgerTotals(src)
+	srcTotal, srcSum, srcMax, err := ledgerTotals(src)
 	if err != nil {
 		return err
 	}
-	dstSum, dstMax, err := ledgerTotals(dst)
+	dstTotal, dstSum, dstMax, err := ledgerTotals(dst)
 	if err != nil {
 		return err
+	}
+	if srcTotal != dstTotal {
+		note("sum(accounts.balance): source %d, destination %d", srcTotal, dstTotal)
 	}
 	if srcSum != dstSum {
-		note("sum(delta): source %d, destination %d", srcSum, dstSum)
+		note("sum(ledger.delta): source %d, destination %d", srcSum, dstSum)
 	}
 	if srcMax != dstMax {
 		note("max(ledger.id): source %d, destination %d", srcMax, dstMax)
+	}
+	// Each side has to be internally consistent too, not merely equal to the
+	// other: two databases can agree on both figures and still both be wrong, and
+	// a copy is exactly the moment to notice. Once retention exists this gains a
+	// ledger_opening term; until then the ledger is never pruned on either side.
+	for _, side := range []struct {
+		name         string
+		total, ledge int64
+	}{{"source", srcTotal, srcSum}, {"destination", dstTotal, dstSum}} {
+		if side.total != side.ledge {
+			note("%s: accounts.balance totals %d but the ledger sums to %d",
+				side.name, side.total, side.ledge)
+		}
 	}
 
 	// The leaderboard, element-wise. This is what catches the collation trap
@@ -108,8 +124,8 @@ func verify(out *os.File, src, dst migrateStore, dstBackend store.Backend) error
 		}
 	}
 
-	fmt.Fprintf(out, "verify: %d/%d balances match  ·  sum(delta) %s == %s\n",
-		matched, len(ids), comma(srcSum), comma(dstSum))
+	fmt.Fprintf(out, "verify: %d/%d balances match  ·  total %s == %s  ·  ledger %s\n",
+		matched, len(ids), comma(srcTotal), comma(dstTotal), comma(dstSum))
 	fmt.Fprintf(out, "        counts %s  ·  leaderboard top-50 %s\n",
 		okWord(countsMatch), okWord(lbMatch))
 
@@ -156,13 +172,24 @@ func rowCount(s migrateStore, table string) (int64, error) {
 	return n, nil
 }
 
-func ledgerTotals(s migrateStore) (sum, max int64, err error) {
+// ledgerTotals returns the two numbers that have to survive a copy — the total
+// money and the highest ledger id — plus the ledger's own sum.
+//
+// SUM(ledger.delta) alone stopped being the total money the moment balance moved
+// onto accounts: a copy that dropped every accounts.balance would otherwise pass
+// verification with matching row counts and a matching ledger sum, and the loss
+// would surface as everyone's marks reading zero after cutover. So `total` is
+// the materialized figure, and `sum` is kept alongside it so the two can be
+// checked against each other on each side of the copy.
+func ledgerTotals(s migrateStore) (total, sum, max int64, err error) {
 	err = s.DB().QueryRow(
-		`SELECT COALESCE(SUM(delta), 0), COALESCE(MAX(id), 0) FROM ledger`).Scan(&sum, &max)
+		`SELECT COALESCE((SELECT SUM(balance) FROM accounts), 0),
+		        COALESCE((SELECT SUM(delta) FROM ledger), 0),
+		        COALESCE((SELECT MAX(id) FROM ledger), 0)`).Scan(&total, &sum, &max)
 	if err != nil {
-		return 0, 0, fmt.Errorf("ledger totals: %w", err)
+		return 0, 0, 0, fmt.Errorf("ledger totals: %w", err)
 	}
-	return sum, max, nil
+	return total, sum, max, nil
 }
 
 // ledgerSequenceNext returns the id the next insert will be given. setval(…,

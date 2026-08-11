@@ -140,8 +140,45 @@ func TestSequenceIsPastMaxID(t *testing.T) {
 	}
 }
 
-// The verifier has to be able to fail, or it is decoration.
+// The verifier has to be able to fail, or it is decoration. Since balance is
+// materialized there are two independent ways a copy can be wrong, and they are
+// caught by two different checks — so both get a case.
+
+// Corrupting the money itself: accounts.balance is what everyone's marks read
+// from, so this is the one that would be visible in chat.
 func TestVerifyCatchesMutatedBalance(t *testing.T) {
+	dsn := storetest.TempSchemaDSN(t, storetest.PostgresDSN(t))
+	src := seedSource(t)
+
+	if out, err := runTool(t, "-from", src, "-to", dsn); err != nil {
+		t.Fatalf("copy: %v\n%s", err, out)
+	}
+
+	dst, _, err := open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dst.DB().Exec(
+		`UPDATE accounts SET balance = balance - 7 WHERE user_id = 'u1'`); err != nil {
+		t.Fatal(err)
+	}
+	dst.Close()
+
+	out, err := runTool(t, "-from", src, "-to", dsn, "-verify-only")
+	if err == nil {
+		t.Fatalf("verify passed after a balance was mutated:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "balance u1") {
+		t.Errorf("error should name the offending user; got: %v", err)
+	}
+}
+
+// Corrupting the history instead. Every balance still agrees across the copy —
+// accounts.balance was untouched — so the per-user comparison passes and only
+// the internal-consistency check notices. Before balance was materialized this
+// was the same failure as the case above; it is now a genuinely different one,
+// and the check that catches it did not previously exist.
+func TestVerifyCatchesLedgerDriftingFromBalance(t *testing.T) {
 	dsn := storetest.TempSchemaDSN(t, storetest.PostgresDSN(t))
 	src := seedSource(t)
 
@@ -161,10 +198,10 @@ func TestVerifyCatchesMutatedBalance(t *testing.T) {
 
 	out, err := runTool(t, "-from", src, "-to", dsn, "-verify-only")
 	if err == nil {
-		t.Fatalf("verify passed after a balance was mutated:\n%s", out)
+		t.Fatalf("verify passed with a ledger row that no balance reflects:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "balance u1") {
-		t.Errorf("error should name the offending user; got: %v", err)
+	if !strings.Contains(err.Error(), "the ledger sums to") {
+		t.Errorf("error should report the balance/ledger inconsistency; got: %v", err)
 	}
 }
 

@@ -69,6 +69,7 @@ func Run(t *testing.T, newStore New) {
 		{"SpendInsufficient", testSpendInsufficient},
 		{"UsersAndLeaderboard", testUsersAndLeaderboard},
 		{"LeaderboardExcludesZeroAndNegative", testLeaderboardExcludesZeroAndNegative},
+		{"LeaderboardMatchesBalances", testLeaderboardMatchesBalances},
 		{"LeaderboardOrderAndTieBreak", testLeaderboardOrderAndTieBreak},
 		{"GrantMintAndClamp", testGrantMintAndClamp},
 		{"Transfer", testTransfer},

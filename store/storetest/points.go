@@ -158,6 +158,64 @@ func testLeaderboardExcludesZeroAndNegative(t *testing.T, s Store) {
 	}
 }
 
+// The leaderboard and Balance are two different queries over the same number.
+// They were one aggregate over the ledger and are now two reads of
+// accounts.balance, so a join that quietly changed the figure — picking up a
+// duplicate users row, say — would show up here and nowhere else.
+func testLeaderboardMatchesBalances(t *testing.T, s Store) {
+	for i, u := range []struct {
+		id, login, display string
+		credit, spend      int64
+	}{
+		{"a", "amy", "Amy", 900, 100},
+		{"b", "bob", "Bob", 500, 0},
+		{"c", "cal", "Cal", 250, 250}, // nets zero, must not appear
+		{"d", "dee", "Dee", 750, 300},
+	} {
+		if err := s.UpsertUser(u.id, u.login, u.display); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Credit(u.id, u.credit, "accrual", ""); err != nil {
+			t.Fatal(err)
+		}
+		if u.spend > 0 {
+			if _, err := s.Spend(u.id, u.spend, "tts"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if i == 0 {
+			if _, err := s.Transfer("a", "b", 50, "give"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	lb, err := s.Leaderboard(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lb) == 0 {
+		t.Fatal("leaderboard is empty — the seed wrote nothing, so this proved nothing")
+	}
+	for _, e := range lb {
+		bal, err := s.Balance(e.UserID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bal != e.Balance {
+			t.Errorf("%s: leaderboard says %d, Balance says %d", e.UserID, e.Balance, bal)
+		}
+		if e.Balance <= 0 {
+			t.Errorf("%s: leaderboard included a non-positive balance %d", e.UserID, e.Balance)
+		}
+	}
+	for _, e := range lb {
+		if e.UserID == "c" {
+			t.Error("leaderboard included c, whose balance nets to zero")
+		}
+	}
+}
+
 // Ordering is balance descending, ties broken by display ascending — and the
 // tie-break is where the two backends diverge without COLLATE "C". "amy" sorts
 // before "Bea" under en_US.UTF-8 (case-insensitive) but after it in byte order.
