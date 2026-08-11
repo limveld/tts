@@ -56,6 +56,28 @@ func Open(dsn string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// OpenExisting opens an already-migrated database and does NOT run migrations.
+//
+// It exists for cmd/store-migrate's source side. Open migrates, which is right
+// for the bot and was harmless for a reader back when the pending migrations
+// were all additive — but migration 00005 rewrites the entire ledger table, so
+// merely *reading* a database now upgrades it. That is a poor bargain when the
+// source of a rollback copy is production.
+//
+// It is deliberately not "read-only": nothing here enforces that, and pretending
+// otherwise would be worse than the honest name.
+func OpenExisting(dsn string) (*Store, error) {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.PingContext(context.Background()); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("connecting: %w", err)
+	}
+	return &Store{db: db}, nil
+}
+
 // migrate applies every pending migration in migrations/. Like the SQLite twin
 // it uses goose's provider API rather than the package-level dialect globals,
 // because the migrate tool drives both dialects in one process.

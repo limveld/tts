@@ -56,6 +56,21 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// OpenExisting opens an already-migrated database without running migrations.
+// The Postgres twin explains why the migrate tool's source side needs this; the
+// two dialects keep the same surface so the tool stays free of special cases.
+func OpenExisting(path string) (*Store, error) {
+	db, err := sql.Open("sqlite", "file:"+path+"?_txlock=immediate&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, err
+	}
+	if err := db.PingContext(context.Background()); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &Store{db: db}, nil
+}
+
 // migrate applies every pending migration in migrations/.
 //
 // It uses goose's provider API rather than the package-level goose.SetDialect /

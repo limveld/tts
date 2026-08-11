@@ -95,10 +95,9 @@ func run(args []string, out *os.File) error {
 		return fmt.Errorf("-from is required (unless -migrate-only)")
 	}
 
-	// Opening runs each backend's migrations, which is what lets the copier be a
-	// dumb table-for-table loop: by the time it runs, the source already has
-	// game_rounds populated by migration 00002 and the destination has somewhere
-	// to put it.
+	// Opening the destination runs its migrations, which is what lets the copier
+	// be a dumb table-for-table loop: by the time it runs there is somewhere to
+	// put every column. The source is opened without migrating — see openSource.
 	dst, dstBackend, err := open(*to)
 	if err != nil {
 		return fmt.Errorf("destination %s: %w", *to, err)
@@ -114,7 +113,7 @@ func run(args []string, out *os.File) error {
 		return nil
 	}
 
-	src, srcBackend, err := open(*from)
+	src, srcBackend, err := openSource(*from)
 	if err != nil {
 		return fmt.Errorf("source %s: %w", *from, err)
 	}
@@ -163,18 +162,44 @@ func run(args []string, out *os.File) error {
 	return nil
 }
 
-// open opens dsn through the same scheme dispatch the bot uses, so the tool and
-// the bot can never disagree about what a DSN means.
+// open connects to dsn through the same scheme dispatch the bot uses — so the
+// tool and the bot can never disagree about what a DSN means — and brings its
+// schema up to date. That is correct for the destination, which this tool is
+// responsible for creating. For the source, see openSource.
 func open(dsn string) (migrateStore, store.Backend, error) {
+	return openWith(dsn, postgres.Open, sqlite.Open)
+}
+
+// openSource connects without migrating.
+//
+// The source is being read, and upgrading a database as a side effect of
+// reading it is a surprise in any case — but it became a destructive one with
+// migration 00005, which rewrites the whole ledger table. The rollback
+// direction reads *production*, so `store-migrate -from postgres:///tts` would
+// otherwise partition production on the spot, while the running bot still spoke
+// the old schema. (Asked how I know: that is exactly what happened here on
+// 2026-08-11.)
+//
+// A source that is behind on migrations now fails the copy with a missing-column
+// error instead, which is the right outcome: migrate it deliberately, with
+// `-migrate-only`, having decided to.
+func openSource(dsn string) (migrateStore, store.Backend, error) {
+	return openWith(dsn, postgres.OpenExisting, sqlite.OpenExisting)
+}
+
+func openWith(dsn string,
+	openPG func(string) (*postgres.Store, error),
+	openLite func(string) (*sqlite.Store, error),
+) (migrateStore, store.Backend, error) {
 	backend, target := store.Classify(dsn)
 	if backend == store.PostgresBackend {
-		s, err := postgres.Open(target)
+		s, err := openPG(target)
 		if err != nil {
 			return nil, backend, err
 		}
 		return s, backend, nil
 	}
-	s, err := sqlite.Open(target)
+	s, err := openLite(target)
 	if err != nil {
 		return nil, backend, err
 	}
