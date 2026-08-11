@@ -181,8 +181,14 @@ func (s *Store) Credit(userID string, amount int64, reason, ref string) (credite
 	if err := ensureAccount(ctx, tx, userID, now); err != nil {
 		return false, err
 	}
+	// ts_at is ts in the type the partition key needs, derived from the same
+	// argument so the two cannot disagree. Nothing in the schema enforces the
+	// relationship — a generated column cannot be a partition key, and a BEFORE
+	// INSERT trigger fires after tuple routing — so every INSERT site writes it,
+	// and there is no DEFAULT to quietly rescue one that forgets. Every ledger
+	// INSERT in this file does the same; the reasoning is only written out here.
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO ledger (user_id, delta, reason, ref, ts) VALUES ($1, $2, $3, $4, $5)`,
+		`INSERT INTO ledger (user_id, delta, reason, ref, ts, ts_at) VALUES ($1, $2, $3, $4, $5::bigint, to_timestamp($5::bigint))`,
 		userID, amount, reason, refVal, now); err != nil {
 		return false, err
 	}
@@ -220,7 +226,7 @@ func (s *Store) Grant(userID string, delta int64, reason string) (newBal int64, 
 	}
 	if applied != 0 {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO ledger (user_id, delta, reason, ts) VALUES ($1, $2, $3, $4)`,
+			`INSERT INTO ledger (user_id, delta, reason, ts, ts_at) VALUES ($1, $2, $3, $4::bigint, to_timestamp($4::bigint))`,
 			userID, applied, reason, now); err != nil {
 			return 0, err
 		}
@@ -261,7 +267,7 @@ func (s *Store) Spend(userID string, amount int64, reason string) (ok bool, err 
 		return false, nil
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO ledger (user_id, delta, reason, ts) VALUES ($1, $2, $3, $4)`,
+		`INSERT INTO ledger (user_id, delta, reason, ts, ts_at) VALUES ($1, $2, $3, $4::bigint, to_timestamp($4::bigint))`,
 		userID, -amount, reason, now); err != nil {
 		return false, err
 	}
@@ -312,11 +318,11 @@ func (s *Store) Transfer(fromID, toID string, amount int64, reason string) (ok b
 	if bal < amount {
 		return false, nil
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO ledger (user_id, delta, reason, ts) VALUES ($1, $2, $3, $4)`,
+	if _, err := tx.ExecContext(ctx, `INSERT INTO ledger (user_id, delta, reason, ts, ts_at) VALUES ($1, $2, $3, $4::bigint, to_timestamp($4::bigint))`,
 		fromID, -amount, reason+"_out", now); err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO ledger (user_id, delta, reason, ts) VALUES ($1, $2, $3, $4)`,
+	if _, err := tx.ExecContext(ctx, `INSERT INTO ledger (user_id, delta, reason, ts, ts_at) VALUES ($1, $2, $3, $4::bigint, to_timestamp($4::bigint))`,
 		toID, amount, reason+"_in", now); err != nil {
 		return false, err
 	}

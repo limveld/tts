@@ -131,7 +131,7 @@ func TestSequenceIsPastMaxID(t *testing.T) {
 	}
 	var got int64
 	if err := dst.DB().QueryRow(
-		`INSERT INTO ledger (user_id, delta, reason, ts) VALUES ('after', 1, 'accrual', 0) RETURNING id`,
+		`INSERT INTO ledger (user_id, delta, reason, ts, ts_at) VALUES ('after', 1, 'accrual', 0, to_timestamp(0)) RETURNING id`,
 	).Scan(&got); err != nil {
 		t.Fatalf("first credit after copy failed — sequence not reset: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestVerifyCatchesLedgerDriftingFromBalance(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := dst.DB().Exec(
-		`INSERT INTO ledger (user_id, delta, reason, ts) VALUES ('u1', -7, 'sabotage', 0)`); err != nil {
+		`INSERT INTO ledger (user_id, delta, reason, ts, ts_at) VALUES ('u1', -7, 'sabotage', 0, to_timestamp(0))`); err != nil {
 		t.Fatal(err)
 	}
 	dst.Close()

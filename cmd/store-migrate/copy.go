@@ -78,15 +78,34 @@ func copyAll(src, dst migrateStore, dstBackend store.Backend) (map[string]int64,
 }
 
 // insertStatement builds a multi-VALUES insert for n rows, in the destination's
-// placeholder dialect. game_rounds.state is cast to jsonb on a Postgres
-// destination: it arrives as text from SQLite, and JSONB won't take it
-// otherwise.
+// placeholder dialect.
+//
+// Two Postgres-only adjustments, both because the destination column is not
+// quite the source column:
+//
+//   - game_rounds.state is cast to jsonb: it arrives as text from SQLite, and
+//     JSONB won't take it otherwise.
+//   - ledger gains ts_at, the partition key, which exists only on Postgres. It
+//     is derived rather than copied — the same to_timestamp(ts) every INSERT in
+//     store/postgres/points.go writes — and it re-uses the ts placeholder rather
+//     than binding a seventh argument, so the caller's row-to-args loop stays a
+//     straight copy of the source columns.
+//
+// Without that a copy into a partitioned ledger fails outright on the NOT NULL,
+// which is the good outcome: the alternative, a DEFAULT, would put every copied
+// row in the partition for the day of the copy.
 func insertStatement(table string, columns []string, n int, backend store.Backend) (string, []any) {
+	pg := backend == store.PostgresBackend
+	derivedTsAt := pg && table == "ledger"
+
 	var b strings.Builder
 	b.WriteString("INSERT INTO ")
 	b.WriteString(table)
 	b.WriteString(" (")
 	b.WriteString(strings.Join(columns, ", "))
+	if derivedTsAt {
+		b.WriteString(", ts_at")
+	}
 	b.WriteString(") VALUES ")
 
 	arg := 1
@@ -95,19 +114,30 @@ func insertStatement(table string, columns []string, n int, backend store.Backen
 			b.WriteString(", ")
 		}
 		b.WriteByte('(')
+		tsArg := 0
 		for i, col := range columns {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			if backend == store.PostgresBackend {
+			if pg {
 				fmt.Fprintf(&b, "$%d", arg)
 				if table == "game_rounds" && col == "state" {
 					b.WriteString("::jsonb")
+				}
+				if derivedTsAt && col == "ts" {
+					b.WriteString("::bigint")
+					tsArg = arg
 				}
 				arg++
 			} else {
 				b.WriteByte('?')
 			}
+		}
+		if derivedTsAt {
+			// ::bigint on both uses of the placeholder, or Postgres tries to
+			// deduce one type for a parameter used as both ts (bigint) and
+			// to_timestamp's argument (double precision) and refuses.
+			fmt.Fprintf(&b, ", to_timestamp($%d::bigint)", tsArg)
 		}
 		b.WriteByte(')')
 	}

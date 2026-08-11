@@ -60,18 +60,29 @@ func Open(dsn string) (*Store, error) {
 // it uses goose's provider API rather than the package-level dialect globals,
 // because the migrate tool drives both dialects in one process.
 func migrate(db *sql.DB) error {
-	sub, err := fs.Sub(migrationsFS, "migrations")
+	p, err := provider(db)
 	if err != nil {
 		return err
-	}
-	p, err := goose.NewProvider(goose.DialectPostgres, db, sub, goose.WithLogger(quietLogger{}))
-	if err != nil {
-		return fmt.Errorf("migrations: %w", err)
 	}
 	if _, err := p.Up(context.Background()); err != nil {
 		return fmt.Errorf("migrating: %w", err)
 	}
 	return nil
+}
+
+// provider builds the goose provider over the embedded migrations. Split out of
+// migrate so tests can drive it in the other direction: a down migration nobody
+// runs is a rollback plan nobody has.
+func provider(db *sql.DB) (*goose.Provider, error) {
+	sub, err := fs.Sub(migrationsFS, "migrations")
+	if err != nil {
+		return nil, err
+	}
+	p, err := goose.NewProvider(goose.DialectPostgres, db, sub, goose.WithLogger(quietLogger{}))
+	if err != nil {
+		return nil, fmt.Errorf("migrations: %w", err)
+	}
+	return p, nil
 }
 
 // quietLogger drops goose's chatter; failures still come back as errors from Up.
