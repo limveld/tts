@@ -49,7 +49,7 @@ var tables = []struct {
 }{
 	{"commands", []string{"name", "response", "cooldown", "min_role", "count"}},
 	{"users", []string{"user_id", "login", "display", "last_seen"}},
-	{"accounts", []string{"user_id", "created_at", "updated_at"}},
+	{"accounts", []string{"user_id", "created_at", "updated_at", "balance"}},
 	{"ledger", []string{"id", "user_id", "delta", "reason", "ref", "ts"}},
 	{"settings", []string{"key", "value"}},
 	{"wordle_wins", []string{"user_id", "login", "display", "wins"}},

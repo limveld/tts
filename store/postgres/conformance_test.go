@@ -1,6 +1,7 @@
 package postgres_test
 
 import (
+	"database/sql"
 	"testing"
 
 	"tts/store/postgres"
@@ -33,4 +34,20 @@ func TestConformance(t *testing.T) {
 func TestConformanceConcurrent(t *testing.T) {
 	base := storetest.PostgresDSN(t)
 	storetest.RunConcurrent(t, newStore(base))
+}
+
+// The handle handed to the invariant suite is the store's own, so it inherits
+// the temp schema's search_path. A fresh connection to the base DSN would read
+// public and quietly find nothing.
+func TestConformanceInvariants(t *testing.T) {
+	base := storetest.PostgresDSN(t)
+	storetest.RunInvariants(t, func(t *testing.T) (storetest.Store, *sql.DB) {
+		dsn := storetest.TempSchemaDSN(t, base)
+		s, err := postgres.Open(dsn)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		t.Cleanup(func() { s.Close() })
+		return s, s.DB()
+	})
 }

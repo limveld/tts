@@ -1,6 +1,7 @@
 package sqlite_test
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -23,5 +24,19 @@ func TestConformance(t *testing.T) {
 		}
 		t.Cleanup(func() { s.Close() })
 		return s
+	})
+}
+
+// The invariant suite does run here: accounts.balance is behavioral, so it has to
+// hold on both backends. On SQLite the ledger_opening term is always zero, which
+// makes the invariant the simpler balance == SUM(ledger).
+func TestConformanceInvariants(t *testing.T) {
+	storetest.RunInvariants(t, func(t *testing.T) (storetest.Store, *sql.DB) {
+		s, err := sqlite.Open(filepath.Join(t.TempDir(), "invariants.db"))
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		t.Cleanup(func() { s.Close() })
+		return s, s.DB()
 	})
 }

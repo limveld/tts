@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -264,15 +265,23 @@ func TestMigrateOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrate-only: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "schema 2") {
-		t.Errorf("output should report the schema version:\n%s", out)
-	}
-
 	dst, _, err := open(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer dst.Close()
+
+	// Compared against what goose actually applied rather than a literal, so
+	// adding a migration doesn't fail a test that has nothing to do with it.
+	var applied int64
+	if err := dst.DB().QueryRow(
+		`SELECT MAX(version_id) FROM goose_db_version WHERE is_applied = true`).Scan(&applied); err != nil {
+		t.Fatalf("read goose_db_version: %v", err)
+	}
+	if want := fmt.Sprintf("schema %d", applied); !strings.Contains(out, want) {
+		t.Errorf("output should report %q:\n%s", want, out)
+	}
+
 	var n int64
 	if err := dst.DB().QueryRow(`SELECT COUNT(*) FROM ledger`).Scan(&n); err != nil {
 		t.Fatalf("ledger table missing after -migrate-only: %v", err)

@@ -9,7 +9,7 @@ import (
 // wantSchemaVersion is the highest migration in migrations/. It must stay in step
 // with store/sqlite's — the two dialects are meant to describe the same schema,
 // and the migrate tool prints both.
-const wantSchemaVersion = 2
+const wantSchemaVersion = 3
 
 func schemaVersion(t *testing.T, s *Store) int64 {
 	t.Helper()

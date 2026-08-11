@@ -20,6 +20,26 @@ import (
 // fix is a row lock, and it cannot be taken on the balance itself: SUM(ledger)
 // is a predicate, and no predicate lock stops a concurrent INSERT. So there is a
 // concrete row per user to serialize on, in accounts.
+//
+// As of migration 00003 that same row also carries a materialized balance,
+// written by applyDelta in the same transaction as the ledger row it reflects.
+// Nothing reads it yet — the read paths switch over in a later migration, once
+// the conformance suite has proved the column agrees with SUM(ledger). Until
+// then this file maintains a value it does not consume, on purpose: it is real
+// currency, and the column proves itself before anything depends on it. See
+// docs/adr/0002-ledger-retention-and-partitioning.md.
+
+// ensureAccount creates userID's account row if it is missing. Split out of
+// lockAccount because Credit needs the row to exist but has no reason to lock it
+// for reading: a credit cannot overdraw, so there is no check to serialize.
+func ensureAccount(ctx context.Context, tx *sql.Tx, userID string, now int64) error {
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO accounts (user_id, created_at, updated_at) VALUES ($1, $2, $2)
+		 ON CONFLICT (user_id) DO NOTHING`, userID, now); err != nil {
+		return fmt.Errorf("ensure account %s: %w", userID, err)
+	}
+	return nil
+}
 
 // lockAccount pins userID's account row for the remainder of tx. Every path that
 // reads a balance in order to change it takes this lock first, so check-then-
@@ -27,10 +47,8 @@ import (
 // comment.
 func lockAccount(ctx context.Context, tx *sql.Tx, userID string, now int64) error {
 	for attempt := 0; attempt < 2; attempt++ {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO accounts (user_id, created_at, updated_at) VALUES ($1, $2, $2)
-			 ON CONFLICT (user_id) DO NOTHING`, userID, now); err != nil {
-			return fmt.Errorf("ensure account %s: %w", userID, err)
+		if err := ensureAccount(ctx, tx, userID, now); err != nil {
+			return err
 		}
 		var got string
 		err := tx.QueryRowContext(ctx,
@@ -56,10 +74,19 @@ func balanceTx(ctx context.Context, tx *sql.Tx, userID string) (int64, error) {
 	return bal, err
 }
 
-// touchAccount records that the account was used, so a lock row isn't a mystery
-// when someone looks at the table.
-func touchAccount(ctx context.Context, tx *sql.Tx, userID string, now int64) error {
-	_, err := tx.ExecContext(ctx, `UPDATE accounts SET updated_at = $2 WHERE user_id = $1`, userID, now)
+// applyDelta moves userID's materialized balance by delta and records that the
+// account was used. It must run in the same transaction as the ledger row it
+// corresponds to: accounts.balance is a running total of ledger.delta, and the
+// two committing apart is exactly the drift ADR-0001 avoided by not having a
+// balance column at all. Callers pass the delta they actually wrote — Grant in
+// particular passes its post-clamp value, not the requested one.
+//
+// The row must exist; every caller has already been through ensureAccount or
+// lockAccount.
+func applyDelta(ctx context.Context, tx *sql.Tx, userID string, delta, now int64) error {
+	_, err := tx.ExecContext(ctx,
+		`UPDATE accounts SET balance = balance + $2, updated_at = $3 WHERE user_id = $1`,
+		userID, delta, now)
 	return err
 }
 
@@ -103,30 +130,56 @@ func (s *Store) Balance(userID string) (int64, error) {
 //
 // No account lock: a credit can only raise a balance, so it cannot overdraw, and
 // one landing mid-Spend just leaves the payer richer than that check believed.
+// It is a transaction all the same, because the ledger row and the balance have
+// to commit together or they can disagree.
 func (s *Store) Credit(userID string, amount int64, reason, ref string) (credited bool, err error) {
+	ctx := context.Background()
 	now := time.Now().Unix()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
 	if ref == "" {
-		res, err := s.db.Exec(
-			`INSERT INTO ledger (user_id, delta, reason, ref, ts) VALUES ($1, $2, $3, NULL, $4)`,
-			userID, amount, reason, now)
-		if err != nil {
+		if err := ensureAccount(ctx, tx, userID, now); err != nil {
 			return false, err
 		}
-		n, _ := res.RowsAffected()
-		return n > 0, nil
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO ledger (user_id, delta, reason, ref, ts) VALUES ($1, $2, $3, NULL, $4)`,
+			userID, amount, reason, now); err != nil {
+			return false, err
+		}
+		if err := applyDelta(ctx, tx, userID, amount, now); err != nil {
+			return false, err
+		}
+		return true, tx.Commit()
 	}
+
 	// The conflict target has to repeat the partial index's predicate, or
 	// Postgres cannot infer which index to use and the statement fails at
 	// runtime rather than at parse time.
-	res, err := s.db.Exec(
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO ledger (user_id, delta, reason, ref, ts) VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (ref) WHERE ref IS NOT NULL DO NOTHING`,
 		userID, amount, reason, ref, now)
 	if err != nil {
 		return false, err
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Already applied. Nothing was written, so the deferred Rollback is the
+		// whole cleanup — and crucially no delta is applied to the balance.
+		return false, nil
+	}
+	if err := ensureAccount(ctx, tx, userID, now); err != nil {
+		return false, err
+	}
+	// Last, so the row lock this takes is held for as little of the transaction
+	// as possible: under a redemption retry storm every goroutine wants this row.
+	if err := applyDelta(ctx, tx, userID, amount, now); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 // Grant is an admin mint/claw-back (for !grant): a positive delta adds marks
@@ -160,7 +213,9 @@ func (s *Store) Grant(userID string, delta int64, reason string) (newBal int64, 
 			return 0, err
 		}
 	}
-	if err := touchAccount(ctx, tx, userID, now); err != nil {
+	// applied, not delta: a claw-back clamped at zero writes a clamped ledger row,
+	// and the balance has to move by the same number that row records.
+	if err := applyDelta(ctx, tx, userID, applied, now); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -198,7 +253,7 @@ func (s *Store) Spend(userID string, amount int64, reason string) (ok bool, err 
 		userID, -amount, reason, now); err != nil {
 		return false, err
 	}
-	if err := touchAccount(ctx, tx, userID, now); err != nil {
+	if err := applyDelta(ctx, tx, userID, -amount, now); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -253,10 +308,10 @@ func (s *Store) Transfer(fromID, toID string, amount int64, reason string) (ok b
 		toID, amount, reason+"_in", now); err != nil {
 		return false, err
 	}
-	if err := touchAccount(ctx, tx, fromID, now); err != nil {
+	if err := applyDelta(ctx, tx, fromID, -amount, now); err != nil {
 		return false, err
 	}
-	if err := touchAccount(ctx, tx, toID, now); err != nil {
+	if err := applyDelta(ctx, tx, toID, amount, now); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
