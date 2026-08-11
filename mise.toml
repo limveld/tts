@@ -240,3 +240,36 @@ run = "bash deploy/service.sh pgbackup install"
 [tasks."db:backup:uninstall"]
 description = "Remove the daily backup agent"
 run = "bash deploy/service.sh pgbackup uninstall"
+
+[tasks."db:partition:build"]
+description = "Build the ledger partition-maintenance binary"
+run = "go build -o bin/pg-partition ./cmd/pg-partition"
+
+[tasks."db:partition"]
+description = "Run one partition-maintenance pass now (provision, fold, reconcile, drop)"
+run = "go run ./cmd/pg-partition"
+
+[tasks."db:partition:dry"]
+description = "Show what a partition-maintenance pass would do, changing nothing"
+run = "go run ./cmd/pg-partition -dry-run"
+
+[tasks."db:partition:backfill"]
+description = "Rescue rows stranded in ledger_default (after a re-cutover, or a long agent outage)"
+run = "go run ./cmd/pg-partition -backfill"
+
+[tasks."db:partition:install"]
+description = "Install the daily 05:15 partition-maintenance LaunchAgent (runs after the backup)"
+depends = ["db:partition:build"]
+run = "bash deploy/service.sh pgpartition install"
+
+[tasks."db:partition:uninstall"]
+description = "Remove the partition-maintenance agent"
+run = "bash deploy/service.sh pgpartition uninstall"
+
+[tasks."db:partition:status"]
+description = "Show the partition-maintenance agent's state"
+run = "bash deploy/service.sh pgpartition status"
+
+[tasks."db:partition:logs"]
+description = "Follow the partition-maintenance agent's error log"
+run = "bash deploy/service.sh pgpartition logs"

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.rtukpe.tts-pg-partition</string>
+
+  <!-- __REPO__ / __LOGDIR__ / __TTS_DATABASE_URL__ are substituted by
+       deploy/service.sh. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/bin/pg-partition</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- /opt/homebrew/bin so libpq's helpers resolve the same way they do for
+         the backup agent. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>TTS_DATABASE_URL</key>
+    <string>__TTS_DATABASE_URL__</string>
+  </dict>
+
+  <!-- Daily at 05:15, fifteen minutes after the 05:00 pg_dump. That ordering is
+       a safety property, not a scheduling preference: this job drops ledger
+       partitions, and the dump taken fifteen minutes earlier is the only
+       itemized copy of the rows it removes. Do not move it earlier than the
+       backup, and do not close the gap so far that a slow dump is still running.
+
+       RunAtLoad is false on purpose: installing the agent must not immediately
+       run something destructive. Do a `mise run db:partition:dry` first. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>5</integer>
+    <key>Minute</key>
+    <integer>15</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__LOGDIR__/tts-pg-partition.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOGDIR__/tts-pg-partition.err.log</string>
+</dict>
+</plist>
