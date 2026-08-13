@@ -1,8 +1,13 @@
 # launchd agents can't start binaries or scripts under ~/Documents
 
-Status: ready-for-human
+Status: done (2026-08-13)
 Type: task
 Created: 2026-08-13
+
+**Resolved by option 2, narrowed to its cheapest form: the whole repo moved from
+`/Users/rtukpe/Documents/tts` to `/Users/rtukpe/dev/tts`.** No code changed — `deploy/service.sh`
+derives its root from its own location and every plist substitutes `__REPO__`, so reinstalling the
+four agents was the entire fix. See "Resolution" at the bottom.
 
 ## Summary
 
@@ -112,3 +117,43 @@ That is a stopgap. It has no `KeepAlive` and will not come back after a reboot. 
 - `com.rtukpe.tts-pg-backup` completes its next scheduled run without `Operation not permitted`.
 - A rebuild (`mise run bot:build`) followed by a service restart still starts cleanly — the check
   that decides whether option 1 alone is sufficient.
+
+## Resolution
+
+Option 2, in its cheapest form: `mv ~/Documents/tts ~/dev/tts` (an instant same-volume rename, not a
+1 GB copy) plus reinstalling the four agents so their plists re-render against the new root. Option 1
+was rejected — TCC keys on code identity and `go build` produces ad-hoc-signed binaries whose
+identity changes on every build, so the grant would need redoing after every `mise run *:build`.
+Splitting a separate runtime root out of the repo was rejected as strictly more work with a permanent
+config-sync tax and no additional benefit.
+
+**Verified before moving anything**: the same `bin/pg-partition` that hangs forever under a launchd
+agent from `~/Documents` printed its usage text within a second from `~/dev`. `~/Documents`,
+`~/Desktop` and `~/Downloads` are the protected set; nothing else in `$HOME` is.
+
+Two assumptions turned out to be wrong and are worth recording:
+
+- **The venv did not need reinstalling.** `.venv/bin/python → python3 →` an absolute symlink to the
+  mise-installed base interpreter, which lives outside the repo. Per PEP 405 the prefix is derived
+  from the interpreter's location plus the sibling `pyvenv.cfg`, so it resolves at any path. Only 43
+  text files carried the old path (39 console-script shebangs, `activate*`, `pyvenv.cfg`) — all
+  dev-time conveniences, fixed with one `sed`. `import kokoro` then resolved from the new prefix, and
+  the sidecar reached `kokoro pipeline ready` on the first start.
+- **This was not new on 2026-08-13.** `tts-server.err.log` carries
+  `PermissionError(1, 'Operation not permitted')` on a torch file from **2026/07/22**, so the block
+  has been intermittent for weeks. It only became fatal when a restart was needed.
+
+Also repointed: mise's trust and tracking entries under `~/.local/state/mise/{trusted,tracked}-configs`
+are hash-named symlinks to the old path — deleted and regenerated with `mise trust` rather than
+recomputing the hashes.
+
+Git needed nothing: the `kokoro` submodule wiring is relative on both sides (`kokoro/.git` →
+`gitdir: ../.git/modules/kokoro`, `.git/modules/kokoro/config` → `worktree = ../../../kokoro`).
+
+Post-move state: all four agents loaded, `tts-bot` and `tts-server` running with real pids,
+`/healthz` ok, Kokoro sidecar live, `mise run bot:service:restart` clean, and the first successful
+`pg-backup` since 2026-08-10 — the Aug 11/12/13 nightly runs had all been failing silently.
+
+Claude Code's project data is keyed by the encoded absolute path
+(`~/.claude/projects/-Users-rtukpe-Documents-tts` and the `projects` key in `~/.claude.json`) and has
+to be remapped separately, outside a live session.
