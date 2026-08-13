@@ -3,10 +3,13 @@ package twitch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -138,5 +141,65 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 	if out.AccessToken != "a" || out.Login != "l" || out.UserID != "u" {
 		t.Errorf("out=%+v", out)
+	}
+	fi, err := os.Stat(filepath.Join(filepath.Dir(s.path), filepath.Base(s.path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 { // it holds a live credential
+		t.Errorf("perm=%o want 600", perm)
+	}
+}
+
+// TestStoreConcurrentSave is the regression test for the ENOENT that took
+// redemption polling down: every saver used to write the same <path>.tmp, so the
+// first rename moved it away and the rest failed with "no such file or directory"
+// — and a rename could publish another saver's bytes.
+func TestStoreConcurrentSave(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(filepath.Join(dir, "tok.json"))
+
+	const n = 16
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = s.Save(&Token{
+				AccessToken:  fmt.Sprintf("a%d", i),
+				RefreshToken: fmt.Sprintf("r%d", i),
+				UserID:       "u",
+				Login:        "l",
+			})
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("save %d: %v", i, err)
+		}
+	}
+
+	// Whichever save landed last must be readable in full — never a torn file.
+	out, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil || !strings.HasPrefix(out.AccessToken, "a") || out.UserID != "u" {
+		t.Errorf("out=%+v", out)
+	}
+
+	// No temp file may survive: it holds the same secrets as the store itself.
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ents) != 1 || ents[0].Name() != "tok.json" {
+		names := make([]string, len(ents))
+		for i, e := range ents {
+			names[i] = e.Name()
+		}
+		t.Errorf("dir=%v want just tok.json", names)
 	}
 }
