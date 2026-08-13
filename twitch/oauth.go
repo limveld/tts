@@ -69,13 +69,23 @@ func (c *Client) tokenRequest(ctx context.Context, form url.Values) (*Token, err
 	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
 		return nil, err
 	}
+	// A 200 with no access_token is a broken response; erroring keeps the good
+	// token we already hold instead of installing a useless one.
+	if tr.AccessToken == "" {
+		return nil, fmt.Errorf("token endpoint: response has no access_token")
+	}
 	t := &Token{
 		AccessToken:  tr.AccessToken,
 		RefreshToken: tr.RefreshToken,
 		Scope:        tr.Scope,
 	}
 	if tr.ExpiresIn > 0 {
-		t.Expiry = time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
+		// Round(0) strips the monotonic reading. On macOS the monotonic clock stops
+		// while the machine sleeps, so a token minted before an 18-hour sleep would
+		// still compare as fresh on wake — precisely the case needsRefresh exists
+		// for. Wall-clock is what we want, and it's what survives the JSON round
+		// trip through the store anyway.
+		t.Expiry = time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second).Round(0)
 	}
 	return t, nil
 }

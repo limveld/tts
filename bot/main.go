@@ -211,6 +211,7 @@ func buildChat(cfg Config, logger *log.Logger) (Chat, *twitch.Client, *twitch.To
 		return nil, nil, nil
 	}
 	client := twitch.NewClient(cfg.TwitchClientID, cfg.TwitchSecret, tokStore)
+	client.SetLogger(logger) // so a failed token persist is visible without failing the request
 	client.SetToken(tok)
 	logger.Printf("twitch: chat replies enabled as %s", tok.Login)
 	return NewChatSender(client), client, tok

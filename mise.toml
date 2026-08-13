@@ -23,7 +23,7 @@ mise run bot:service:restart
 
 [tasks."server:build"]
 description = "Build the TTS server binary"
-sources = ["server/*.go", "go.mod"]
+sources = ["server/*.go", "sfxlib/*.go", "go.mod"] # see bot:build — sources must cover every dep
 outputs = ["bin/tts-server"]
 run = "go build -o bin/tts-server ./server"
 
@@ -77,7 +77,10 @@ run = "go run ./cmd/connections-fetch"
 
 [tasks."bot:build"]
 description = "Build the Twitch bot binary"
-sources = ["bot/*.go", "go.mod"]
+# Every package `go list -deps ./bot` reports, not just bot/ — a twitch/ or store/
+# change that isn't listed here leaves the fingerprint unchanged, so the task
+# no-ops and bot:service:restart relaunches the stale binary.
+sources = ["bot/*.go", "twitch/*.go", "store/**/*.go", "sfxlib/*.go", "go.mod"]
 outputs = ["bin/tts-bot"]
 run = "go build -o bin/tts-bot ./bot"
 
