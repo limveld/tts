@@ -49,6 +49,12 @@ type Store interface {
 	WordleLeaderboard(n int) ([]store.WordleWin, error)
 	ConnectionsAddWin(userID, login, display string) (wins int, err error)
 	ConnectionsLeaderboard(n int) ([]store.ConnectionsWin, error)
+
+	// Chat log
+	LogMessages(msgs []store.ChatMessage) error
+	MarkDeleted(roomID, msgID string, at int64) (found bool, err error)
+	MarkUserCleared(roomID, userID string, since, at int64) (n int64, err error)
+	UserMessages(userID string, limit int) ([]store.ChatMessage, error)
 }
 
 // New builds one isolated store. Implementations must hand back a store that
@@ -80,6 +86,11 @@ func Run(t *testing.T, newStore New) {
 		{"ConnectionsTally", testConnectionsTally},
 		{"RoundSaveLoadClear", testRoundSaveLoadClear},
 		{"RoundOverwrite", testRoundOverwrite},
+		{"ChatLogRoundTrip", testChatLogRoundTrip},
+		{"ChatLogEmptyBatch", testChatLogEmptyBatch},
+		{"ChatMarkDeleted", testChatMarkDeleted},
+		{"ChatMarkUserCleared", testChatMarkUserCleared},
+		{"ChatTombstonesDoNotCrossType", testChatTombstonesDoNotCrossType},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) { c.body(t, newStore(t)) })
