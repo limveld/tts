@@ -2,16 +2,18 @@ package postgres
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
+	"tts/store"
 	"tts/store/storetest"
 )
 
 // wantSchemaVersion is the highest migration in migrations/. It must stay in step
 // with store/sqlite's — the two dialects are meant to describe the same schema,
 // and the migrate tool prints both.
-const wantSchemaVersion = 5
+const wantSchemaVersion = 6
 
 func schemaVersion(t *testing.T, s *Store) int64 {
 	t.Helper()
@@ -275,7 +277,10 @@ func TestPartitionMigrationIsReversible(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.Down(context.Background()); err != nil {
+	// DownTo(4) rather than Down(): Down reverses exactly one migration, and the
+	// newest is no longer 00005. Naming the target version keeps this test aimed
+	// at the ledger rewrite however many migrations land on top of it.
+	if _, err := p.DownTo(context.Background(), 4); err != nil {
 		t.Fatalf("down: %v", err)
 	}
 
@@ -317,5 +322,210 @@ func TestPartitionMigrationIsReversible(t *testing.T) {
 	}
 	if _, err := s.Credit("u3", 5, "accrual", ""); err != nil {
 		t.Fatalf("credit after down-then-up: %v", err)
+	}
+}
+
+// The chat log is the ledger's second partitioned parent, and every trap 00005
+// hit applies to it unchanged. These are the ledger assertions above, retargeted
+// — deliberately duplicated rather than shared, because the day one of the two
+// tables stops being partitioned is a day a shared helper would go quiet about.
+
+func TestChatMessageIsPartitionedByRange(t *testing.T) {
+	s, err := Open(storetest.TempSchemaDSN(t, storetest.PostgresDSN(t)))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	var relkind, strategy string
+	if err := s.db.QueryRow(
+		`SELECT c.relkind, p.partstrat
+		   FROM pg_class c JOIN pg_partitioned_table p ON p.partrelid = c.oid
+		  WHERE c.oid = 'chat_message'::regclass`).Scan(&relkind, &strategy); err != nil {
+		t.Fatalf("chat_message is not a partitioned table: %v", err)
+	}
+	if relkind != "p" || strategy != "r" {
+		t.Errorf("relkind=%q partstrat=%q want \"p\"/\"r\"", relkind, strategy)
+	}
+
+	var key string
+	if err := s.db.QueryRow(
+		`SELECT pg_get_partkeydef('chat_message'::regclass)`).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	if key != "RANGE (ts_at)" {
+		t.Errorf("partition key=%q want RANGE (ts_at)", key)
+	}
+}
+
+func TestChatMessageDefaultPartitionExists(t *testing.T) {
+	s, err := Open(storetest.TempSchemaDSN(t, storetest.PostgresDSN(t)))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	var name string
+	if err := s.db.QueryRow(
+		`SELECT c.relname FROM pg_class c
+		   JOIN pg_inherits i ON i.inhrelid = c.oid
+		  WHERE i.inhparent = 'chat_message'::regclass
+		    AND pg_get_expr(c.relpartbound, c.oid) = 'DEFAULT'`).Scan(&name); err != nil {
+		t.Fatalf("no default partition on chat_message: %v", err)
+	}
+	if name != "chat_message_default" {
+		t.Errorf("default partition is %q, want exactly \"chat_message_default\"", name)
+	}
+}
+
+// The migration seeds today plus a 14-day premake window, because the bot starts
+// writing the moment it comes up and cmd/chat-partition does not run until 05:30
+// the next morning. Without these the first night of chat lands in the default
+// partition, where retention can never reach it.
+func TestChatMessagePremakeWindowExists(t *testing.T) {
+	s, err := Open(storetest.TempSchemaDSN(t, storetest.PostgresDSN(t)))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	day := time.Now().UTC()
+	for i := 0; i <= 14; i++ {
+		want := "chat_message_" + day.AddDate(0, 0, i).Format("20060102")
+		var n int
+		if err := s.db.QueryRow(
+			`SELECT COUNT(*) FROM pg_class c
+			   JOIN pg_inherits i ON i.inhrelid = c.oid
+			  WHERE i.inhparent = 'chat_message'::regclass AND c.relname = $1`, want).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Errorf("no partition %s (day +%d of the premake window)", want, i)
+		}
+	}
+}
+
+// The same invariant 00005 documents for the ledger: nothing in the schema can
+// enforce ts_at = to_timestamp(ts), so it is only as good as every INSERT site
+// remembering. Driven through the public API so it covers all of them.
+func TestEveryChatRowHasTsAtMatchingTs(t *testing.T) {
+	s, err := Open(storetest.TempSchemaDSN(t, storetest.PostgresDSN(t)))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	now := time.Now().UTC().Unix()
+	batch := make([]store.ChatMessage, 0, 3)
+	for i := range 3 {
+		batch = append(batch, store.ChatMessage{
+			TS: now - int64(i), RoomID: "room1", MsgID: "m" + strconv.Itoa(i),
+			UserID: "u1", Login: "bob", Display: "Bob", Text: "hi",
+		})
+	}
+	if err := s.LogMessages(batch); err != nil {
+		t.Fatal(err)
+	}
+
+	var total, mismatched int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*), COUNT(*) FILTER (WHERE ts_at <> to_timestamp(ts)) FROM chat_message`,
+	).Scan(&total, &mismatched); err != nil {
+		t.Fatal(err)
+	}
+	if total == 0 {
+		t.Fatal("no chat rows — the workload wrote nothing, so this proved nothing")
+	}
+	if mismatched != 0 {
+		t.Errorf("%d of %d chat rows have ts_at out of step with ts", mismatched, total)
+	}
+}
+
+// TestPartitionBoundsAreUTC's twin. The cluster is Europe/Malta, so a migration
+// that forgets SET LOCAL TimeZone = 'UTC' puts every child two hours off the day
+// it is named after and leaks rows near midnight into the default partition.
+func TestChatPartitionBoundsAreUTC(t *testing.T) {
+	s, err := Open(storetest.TempSchemaDSN(t, storetest.PostgresDSN(t)))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	// 23:30 UTC today: inside today's UTC day, but outside it under any positive
+	// offset. Inserted directly, because LogMessages takes the caller's timestamp
+	// and the bot's is always now().
+	var landedIn string
+	if err := s.db.QueryRow(
+		`WITH t AS (
+		   SELECT (date_trunc('day', now() AT TIME ZONE 'UTC') + interval '23 hours 30 minutes')
+		            AT TIME ZONE 'UTC' AS at
+		 )
+		 INSERT INTO chat_message (ts, ts_at, room_id, msg_id, user_id, login, display, text)
+		 SELECT extract(epoch FROM t.at)::bigint, t.at, 'room1', 'edge', 'u1', 'bob', 'Bob', 'hi' FROM t
+		 RETURNING tableoid::regclass::text`).Scan(&landedIn); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "chat_message_" + time.Now().UTC().Format("20060102")
+	if landedIn != want {
+		t.Errorf("a row at 23:30 UTC landed in %s, want %s — partition bounds are not UTC", landedIn, want)
+	}
+}
+
+// 00006's down drops a partitioned parent with CASCADE, which takes the children
+// with it. Worth exercising: the children are partitions rather than data of
+// their own, and a DROP that left them behind would orphan every one of them
+// into pg_dump.
+func TestChatLogMigrationIsReversible(t *testing.T) {
+	s, err := Open(storetest.TempSchemaDSN(t, storetest.PostgresDSN(t)))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	if err := s.LogMessages([]store.ChatMessage{
+		{TS: time.Now().Unix(), RoomID: "room1", MsgID: "m1", UserID: "u1", Login: "bob", Display: "Bob", Text: "hi"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := provider(s.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Down(context.Background()); err != nil {
+		t.Fatalf("down: %v", err)
+	}
+
+	for _, name := range []string{"chat_message", "chat_stats", "chat_folded"} {
+		var n int
+		if err := s.db.QueryRow(
+			`SELECT COUNT(*) FROM information_schema.tables
+			  WHERE table_schema = current_schema() AND table_name = $1`, name).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Errorf("%s survived the down migration", name)
+		}
+	}
+	// No orphaned children left behind by the CASCADE.
+	var orphans int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM pg_class c
+		   JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = current_schema()
+		  WHERE c.relname LIKE 'chat_message_%'`).Scan(&orphans); err != nil {
+		t.Fatal(err)
+	}
+	if orphans != 0 {
+		t.Errorf("%d chat_message_* tables survived the CASCADE", orphans)
+	}
+
+	if _, err := p.Up(context.Background()); err != nil {
+		t.Fatalf("re-up: %v", err)
+	}
+	if err := s.LogMessages([]store.ChatMessage{
+		{TS: time.Now().Unix(), RoomID: "room1", MsgID: "m2", UserID: "u1", Login: "bob", Display: "Bob", Text: "back"},
+	}); err != nil {
+		t.Fatalf("log after down-then-up: %v", err)
 	}
 }

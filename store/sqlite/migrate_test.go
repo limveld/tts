@@ -73,7 +73,7 @@ func seedLegacyDB(t *testing.T, path string, rows ...string) {
 // wantSchemaVersion is the highest migration in migrations/. Bump it when one is
 // added — a test that tracked the max automatically would pass even if the
 // migration never ran.
-const wantSchemaVersion = 5
+const wantSchemaVersion = 6
 
 func schemaVersion(t *testing.T, s *Store) int64 {
 	t.Helper()
