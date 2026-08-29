@@ -81,19 +81,41 @@ func main() {
 	// tags) so timers can gate on activity and post without a triggering message.
 	var lineCount atomic.Int64
 	var roomID atomic.Pointer[string]
+	roomIDOf := func() string {
+		if p := roomID.Load(); p != nil {
+			return *p
+		}
+		return ""
+	}
+
+	// The chat log. Its writer owns every database call it makes and runs on its
+	// own goroutine, so nothing here can stall the read loop below — which is also
+	// the loop that answers !tts. See bot/chatlog.go.
+	//
+	// Wait is deferred after openStore's Close, and defers run last-in-first-out,
+	// so the final batch is flushed while the handle it needs is still open. It is
+	// bounded because a wedged database must not also mean a bot that will not
+	// exit.
+	var chatLog *ChatLogger
+	if cfg.ChatLog {
+		chatLog = NewChatLogger(db, roomIDOf, logger)
+		go chatLog.Run(ctx)
+		defer chatLog.Wait(5 * time.Second)
+		logger.Printf("chat log: persisting every line to %s", cfg.DB)
+	}
+
 	handle := func(m ChatMessage) {
 		lineCount.Add(1)
 		if m.RoomID != "" {
 			id := m.RoomID
 			roomID.Store(&id)
 		}
-		router.Handle(m)
-	}
-	roomIDOf := func() string {
-		if p := roomID.Load(); p != nil {
-			return *p
+		if chatLog != nil {
+			// Before Handle, so a line is logged whether or not the router does
+			// anything with it — which for most of chat is nothing at all.
+			chatLog.Message(m)
 		}
-		return ""
+		router.Handle(m)
 	}
 
 	// Marks economy: needs points.toml plus a broadcaster token carrying the
@@ -161,6 +183,11 @@ func main() {
 	}
 
 	irc := &IRCClient{channel: cfg.Channel, logger: logger, rnd: rnd, handle: handle}
+	if chatLog != nil {
+		// Left nil when the chat log is off: nothing else in the bot cares that a
+		// message was deleted, so there would be no one to tell.
+		irc.onDelete, irc.onClear = chatLog.Delete, chatLog.Clear
+	}
 	logger.Printf("tts-bot: channel=#%s tts=%s cooldown=%s min-role=%s sfx=%d",
 		cfg.Channel, cfg.TTSURL, cfg.Cooldown, cfg.MinRole, len(cfg.SFX))
 	irc.Run(ctx)

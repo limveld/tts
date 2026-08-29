@@ -31,6 +31,8 @@ type Config struct {
 	DB              string // database: a postgres:// DSN, or a SQLite file path
 	ConnectionsFile string // optional refreshed Connections corpus (falls back to embedded seed)
 
+	ChatLog bool // persist every chat line (and its tombstones) to the store
+
 	Timers []TimerConfig // interval announcements
 
 	Economy        EconomyConfig // marks economy settings (points.toml)
@@ -66,6 +68,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&c.DB, "db", orString(os.Getenv("TTS_DATABASE_URL"), "bot.db"),
 		"database: a postgres:// DSN, or a SQLite file path (env TTS_DATABASE_URL)")
 	fs.StringVar(&c.ConnectionsFile, "connections-file", "connections.json", "refreshed Connections corpus from 'mise run connections:sync' (falls back to the embedded seed)")
+	fs.BoolVar(&c.ChatLog, "chat-log", true, "persist every chat line and its deletions to the store")
 	var timersPath string
 	fs.StringVar(&timersPath, "timers-config", "timers.toml", "timers TOML ([[timer]] announcements); optional")
 	var pointsPath string

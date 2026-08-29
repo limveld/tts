@@ -11,10 +11,10 @@ import (
 //
 // The store's capabilities are declared as separate interfaces in the files that
 // consume them — CommandStore in commands.go, Ledger in economy.go, WordleWins
-// in wordle.go, ConnectionsWins in connections.go, SettingStore here — so a
-// consumer's dependencies are visible where the consumer is, and its fakes have
-// to prove exactly that much. Store is the composite: the *field* type, so
-// Router carries one store rather than six.
+// in wordle.go, ConnectionsWins in connections.go, ChatLog in chatlog.go,
+// SettingStore here — so a consumer's dependencies are visible where the
+// consumer is, and its fakes have to prove exactly that much. Store is the
+// composite: the *field* type, so Router carries one store rather than seven.
 
 // SettingStore is the key/value slice of the store used for runtime toggles —
 // the charge mode and the depth widget's totals (an interface so tests can
@@ -40,6 +40,7 @@ type Store interface {
 	RoundStore
 	WordleWins
 	ConnectionsWins
+	ChatLog
 
 	Close() error
 }
