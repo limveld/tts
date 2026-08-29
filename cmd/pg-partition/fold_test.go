@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"tts/internal/partition"
 	"tts/store/postgres"
 	"tts/store/storetest"
 )
@@ -68,7 +69,7 @@ func seedAcrossDays(t *testing.T, pool *pgxpool.Pool, cfg Config, days int) {
 			if _, err := pool.Exec(ctx, fmt.Sprintf(`
 				INSERT INTO %s (user_id, delta, reason, ts, ts_at)
 				VALUES ($1, $2, 'accrual', $3::bigint, to_timestamp($3::bigint))`,
-				quoteQualified(cfg.Schema, "ledger")),
+				partition.QuoteQualified(cfg.Schema, "ledger")),
 				user, amount, day.Add(12*time.Hour).Unix()); err != nil {
 				t.Fatalf("seeding %s: %v", day.Format(time.DateOnly), err)
 			}
@@ -88,7 +89,7 @@ func makeDay(t *testing.T, pool *pgxpool.Pool, cfg Config, day time.Time) {
 	_, err := pool.Exec(context.Background(), fmt.Sprintf(
 		`SET LOCAL TimeZone = 'UTC';
 		 CREATE TABLE IF NOT EXISTS %s PARTITION OF %s FOR VALUES FROM ('%s') TO ('%s')`,
-		quoteQualified(cfg.Schema, name), quoteQualified(cfg.Schema, "ledger"),
+		partition.QuoteQualified(cfg.Schema, name), partition.QuoteQualified(cfg.Schema, "ledger"),
 		day.Format("2006-01-02"), day.AddDate(0, 0, 1).Format("2006-01-02")))
 	if err != nil {
 		t.Fatalf("creating %s: %v", name, err)
@@ -343,15 +344,15 @@ func TestRegisterIsIdempotentAgainstTheMigration(t *testing.T) {
 	seedAcrossDays(t, pool, cfg, 3)
 	ctx := context.Background()
 
-	mgr, err := newManager(ctx, pool)
+	mgr, err := partition.NewManager(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := ensureRegistered(ctx, mgr, cfg, &buf); err != nil {
+	if err := partition.Register(ctx, mgr, cfg.parent(), &buf); err != nil {
 		t.Fatalf("first register: %v", err)
 	}
-	if err := ensureRegistered(ctx, mgr, cfg, &buf); err != nil {
+	if err := partition.Register(ctx, mgr, cfg.parent(), &buf); err != nil {
 		t.Fatalf("second register: %v", err)
 	}
 	if strings.Contains(buf.String(), "WARNING") {
@@ -367,7 +368,7 @@ func TestRegisterIsIdempotentAgainstTheMigration(t *testing.T) {
 		  JOIN pg_inherits i ON i.inhrelid = c.oid
 		 WHERE i.inhparent = $1::regclass
 		   AND pg_get_expr(c.relpartbound, c.oid) = 'DEFAULT'`,
-		quoteQualified(cfg.Schema, "ledger")).Scan(&defaults); err != nil {
+		partition.QuoteQualified(cfg.Schema, "ledger")).Scan(&defaults); err != nil {
 		t.Fatal(err)
 	}
 	if defaults != 1 {
@@ -391,7 +392,7 @@ func TestBackfillRescuesTheDefaultPartition(t *testing.T) {
 		if _, err := pool.Exec(ctx, fmt.Sprintf(`
 			INSERT INTO %s (user_id, delta, reason, ts, ts_at)
 			VALUES ('u0', 10, 'accrual', $1::bigint, to_timestamp($1::bigint))`,
-			quoteQualified(cfg.Schema, "ledger")), day.Add(12*time.Hour).Unix()); err != nil {
+			partition.QuoteQualified(cfg.Schema, "ledger")), day.Add(12*time.Hour).Unix()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -401,7 +402,7 @@ func TestBackfillRescuesTheDefaultPartition(t *testing.T) {
 	}
 
 	var stranded int64
-	pool.QueryRow(ctx, `SELECT COUNT(*) FROM `+quoteQualified(cfg.Schema, "ledger_default")).Scan(&stranded)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM `+partition.QuoteQualified(cfg.Schema, "ledger_default")).Scan(&stranded)
 	if stranded != 6 {
 		t.Fatalf("%d rows in the default partition, want 6 — the setup did not strand them", stranded)
 	}
@@ -412,7 +413,7 @@ func TestBackfillRescuesTheDefaultPartition(t *testing.T) {
 		t.Fatalf("backfill pass: %v\n%s", err, out)
 	}
 
-	pool.QueryRow(ctx, `SELECT COUNT(*) FROM `+quoteQualified(cfg.Schema, "ledger_default")).Scan(&stranded)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM `+partition.QuoteQualified(cfg.Schema, "ledger_default")).Scan(&stranded)
 	if stranded != 0 {
 		t.Errorf("%d rows still in the default partition after -backfill:\n%s", stranded, out)
 	}

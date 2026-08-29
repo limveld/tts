@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"tts/internal/partition"
 )
 
 // A fold moves one expired partition's history out of the ledger and its
@@ -20,10 +22,14 @@ import (
 // live on accounts and have since migration 00003, which is what demotes this
 // whole file from a money path to an audit path. A bug here is a reconcile
 // alert, not somebody's marks changing.
+//
+// The transaction skeleton — claim, detach, aggregate, commit — lives in
+// internal/partition, shared with the chat log's fold. What stays here is the
+// arithmetic and the gate, which are the parts that are about money.
 
-// FoldResult is one partition's outcome. Skipped is non-empty when the
-// partition was already recorded in ledger_folded — which is the normal way a
-// re-run behaves, not an error.
+// FoldResult is one partition's outcome. Skipped is non-empty when the partition
+// was already recorded in ledger_folded — which is the normal way a re-run
+// behaves, not an error.
 type FoldResult struct {
 	Name          string
 	From, Through time.Time
@@ -68,174 +74,86 @@ func retain(ctx context.Context, pool *pgxpool.Pool, cfg Config, out io.Writer) 
 	}
 	fmt.Fprintln(out, "reconcile: every balance agrees with its history")
 
-	dropped, err := dropFolded(ctx, pool, cfg, out)
+	dropped, err := partition.DropDetached(ctx, pool, cfg.Schema, "ledger_folded", cfg.DryRun, out)
 	if err != nil {
 		return err
 	}
-	if len(dropped) > 0 {
+	if len(dropped) > 0 && !cfg.DryRun {
 		fmt.Fprintf(out, "dropped %d folded partitions: %s\n", len(dropped), strings.Join(dropped, " "))
 	}
 	return nil
 }
 
 // foldExpired folds every ledger child whose upper bound is at or before cutoff.
-//
-// Each partition is one transaction that DETACHes it and adds its per-user
-// totals to ledger_opening in the same commit. PostgreSQL has transactional
-// DDL, so that costs nothing and means the invariant is never observably false
-// — not for a millisecond, and not if the process dies mid-pass. Detaching
-// first takes ACCESS EXCLUSIVE on the parent up front, which on a ~640-row child
-// at 05:15 with no stream running is milliseconds. (DETACH CONCURRENTLY cannot
-// run inside a transaction block, which is exactly why it is not used.)
-//
-// Idempotency comes from ledger_folded's primary key rather than from
-// partman.partitions.status: coupling this to another library's bookkeeping
-// would mean a library upgrade could change what the money means.
 func foldExpired(ctx context.Context, pool *pgxpool.Pool, cfg Config, cutoff time.Time, out io.Writer) ([]FoldResult, error) {
-	type candidate struct {
-		name       string
-		from, thru time.Time
-	}
-	var candidates []candidate
-
-	rows, err := pool.Query(ctx, `
-		SELECT c.relname,
-		       (regexp_match(pg_get_expr(c.relpartbound, c.oid), 'FROM \(''([^'']+)''\)'))[1]::timestamptz,
-		       (regexp_match(pg_get_expr(c.relpartbound, c.oid), 'TO \(''([^'']+)''\)'))[1]::timestamptz
-		  FROM pg_class c
-		  JOIN pg_inherits i ON i.inhrelid = c.oid
-		 WHERE i.inhparent = $1::regclass
-		   AND pg_get_expr(c.relpartbound, c.oid) <> 'DEFAULT'
-		 ORDER BY c.relname`, quoteQualified(cfg.Schema, "ledger"))
+	p := cfg.parent()
+	children, err := partition.ListChildren(ctx, pool, p)
 	if err != nil {
-		return nil, fmt.Errorf("listing partitions: %w", err)
-	}
-	for rows.Next() {
-		var c candidate
-		if err := rows.Scan(&c.name, &c.from, &c.thru); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		// Half-open bounds: a partition is expired once its exclusive upper bound
-		// has passed the cutoff, i.e. every row it can hold is older than the
-		// horizon. Using the lower bound would expire a partition still taking
-		// writes.
-		if !c.thru.After(cutoff) {
-			candidates = append(candidates, c)
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing partitions: %w", err)
+		return nil, err
 	}
 
 	var results []FoldResult
-	for _, c := range candidates {
-		if cfg.DryRun {
-			fmt.Fprintf(out, "fold %s: would fold (bounds %s … %s)\n",
-				c.name, c.from.Format(time.DateOnly), c.thru.Format(time.DateOnly))
-			results = append(results, FoldResult{Name: c.name, From: c.from, Through: c.thru, Skipped: "dry run"})
+	for _, c := range children {
+		if !c.Expired(cutoff) {
 			continue
 		}
-		r, err := foldOne(ctx, pool, cfg, c.name, c.from, c.thru)
+		if cfg.DryRun {
+			fmt.Fprintf(out, "fold %s: would fold (bounds %s … %s)\n",
+				c.Name, c.From.Format(time.DateOnly), c.Through.Format(time.DateOnly))
+			results = append(results, FoldResult{Name: c.Name, From: c.From, Through: c.Through, Skipped: "dry run"})
+			continue
+		}
+		r, err := foldOne(ctx, pool, p, c)
 		if err != nil {
-			return results, fmt.Errorf("folding %s: %w", c.name, err)
+			return results, fmt.Errorf("folding %s: %w", c.Name, err)
 		}
 		results = append(results, r)
 	}
 	return results, nil
 }
 
-func foldOne(ctx context.Context, pool *pgxpool.Pool, cfg Config, name string, from, thru time.Time) (FoldResult, error) {
-	res := FoldResult{Name: name, From: from, Through: thru}
-
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return res, err
-	}
-	defer tx.Rollback(ctx)
-
-	// Claim it first. If a previous run committed the fold and then died before
-	// dropping, this conflicts and we skip straight to the drop — the alternative
-	// is folding the same partition's deltas into ledger_opening twice, which is
-	// the one arithmetic mistake this file must never make.
-	claimed, err := tx.Exec(ctx, `
-		INSERT INTO ledger_folded (name, from_ts, through_ts, rows, delta, folded_at)
-		SELECT $1, $2, $3, COUNT(*), COALESCE(SUM(delta), 0), $4 FROM `+quoteQualified(cfg.Schema, name)+`
-		ON CONFLICT (name) DO NOTHING`,
-		name, from.Unix(), thru.Unix(), time.Now().Unix())
-	if err != nil {
-		return res, err
-	}
-	if claimed.RowsAffected() == 0 {
-		res.Skipped = "already in ledger_folded"
-		return res, nil
-	}
-
-	if _, err := tx.Exec(ctx, fmt.Sprintf(`ALTER TABLE %s DETACH PARTITION %s`,
-		quoteQualified(cfg.Schema, "ledger"), quoteQualified(cfg.Schema, name))); err != nil {
-		return res, err
-	}
-
-	tag, err := tx.Exec(ctx, `
-		INSERT INTO ledger_opening (user_id, delta, through_ts)
-		SELECT user_id, SUM(delta), MAX(ts) FROM `+quoteQualified(cfg.Schema, name)+` GROUP BY user_id
-		ON CONFLICT (user_id) DO UPDATE
-		  SET delta      = ledger_opening.delta + EXCLUDED.delta,
-		      through_ts = GREATEST(ledger_opening.through_ts, EXCLUDED.through_ts)`)
-	if err != nil {
-		return res, err
-	}
-	res.Users = tag.RowsAffected()
-
-	if err := tx.QueryRow(ctx,
-		`SELECT rows, delta FROM ledger_folded WHERE name = $1`, name).Scan(&res.Rows, &res.Delta); err != nil {
-		return res, err
-	}
-	return res, tx.Commit(ctx)
-}
-
-// dropFolded drops every detached child already recorded in ledger_folded.
+// foldOne supplies the ledger's half of the shared fold: the claim that makes it
+// idempotent, and the per-user totals that have to survive the rows.
 //
-// It works from ledger_folded rather than from a list of what was just folded,
-// so it also cleans up orphans: a crash between a fold's COMMIT and its DROP
-// leaves a detached table that no longer answers SELECT ... FROM ledger but is
-// still in pg_dump, quietly growing every backup.
-func dropFolded(ctx context.Context, pool *pgxpool.Pool, cfg Config, out io.Writer) ([]string, error) {
-	rows, err := pool.Query(ctx, `
-		SELECT f.name
-		  FROM ledger_folded f
-		  JOIN pg_class c ON c.relname = f.name
-		  JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = $1
-		 WHERE NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
-		 ORDER BY f.name`, cfg.Schema)
-	if err != nil {
-		return nil, fmt.Errorf("listing folded partitions: %w", err)
-	}
-	var names []string
-	for rows.Next() {
-		var n string
-		if err := rows.Scan(&n); err != nil {
-			rows.Close()
-			return nil, err
+// Idempotency comes from ledger_folded's primary key rather than from
+// partman.partitions.status: coupling this to another library's bookkeeping
+// would mean a library upgrade could change what the money means.
+func foldOne(ctx context.Context, pool *pgxpool.Pool, p partition.Parent, c partition.Child) (FoldResult, error) {
+	res := FoldResult{Name: c.Name, From: c.From, Through: c.Through}
+
+	claim := func(ctx context.Context, tx pgx.Tx, child string) (bool, error) {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO ledger_folded (name, from_ts, through_ts, rows, delta, folded_at)
+			SELECT $1, $2, $3, COUNT(*), COALESCE(SUM(delta), 0), $4 FROM `+child+`
+			ON CONFLICT (name) DO NOTHING`,
+			c.Name, c.From.Unix(), c.Through.Unix(), time.Now().Unix())
+		if err != nil {
+			return false, err
 		}
-		names = append(names, n)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing folded partitions: %w", err)
+		return tag.RowsAffected() > 0, nil
 	}
 
-	if cfg.DryRun {
-		for _, n := range names {
-			fmt.Fprintf(out, "would drop %s\n", n)
+	agg := func(ctx context.Context, tx pgx.Tx, child string) error {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO ledger_opening (user_id, delta, through_ts)
+			SELECT user_id, SUM(delta), MAX(ts) FROM `+child+` GROUP BY user_id
+			ON CONFLICT (user_id) DO UPDATE
+			  SET delta      = ledger_opening.delta + EXCLUDED.delta,
+			      through_ts = GREATEST(ledger_opening.through_ts, EXCLUDED.through_ts)`)
+		if err != nil {
+			return err
 		}
-		return names, nil
+		res.Users = tag.RowsAffected()
+		return tx.QueryRow(ctx,
+			`SELECT rows, delta FROM ledger_folded WHERE name = $1`, c.Name).Scan(&res.Rows, &res.Delta)
 	}
-	for _, n := range names {
-		if _, err := pool.Exec(ctx, `DROP TABLE `+quoteQualified(cfg.Schema, n)); err != nil {
-			return nil, fmt.Errorf("dropping %s: %w", n, err)
-		}
+
+	skipped, err := partition.Fold(ctx, pool, p, c.Name, claim, agg)
+	if err != nil {
+		return res, err
 	}
-	return names, nil
+	if skipped {
+		res.Skipped = "already in ledger_folded"
+	}
+	return res, nil
 }
