@@ -64,7 +64,7 @@ func TempSchemaDSN(t *testing.T, base string) string {
 		t.Skipf("postgres conformance SKIPPED: %s unreachable (%v) — run `mise run db:start`", base, err)
 	}
 
-	name := schemaName(t.Name(), schemaCounter.Add(1))
+	name := schemaName(t.Name(), os.Getpid(), schemaCounter.Add(1))
 	if _, err := admin.Exec(`CREATE SCHEMA ` + name); err != nil {
 		admin.Close()
 		t.Fatalf("create schema %s: %v", name, err)
@@ -88,7 +88,18 @@ func TempSchemaDSN(t *testing.T, base string) string {
 }
 
 // schemaName turns a test name into a legal, unique, lowercase identifier.
-func schemaName(testName string, n int64) string {
+//
+// The pid is in there because the counter alone is not enough. It is a
+// per-process atomic, so two test binaries running against the same database
+// both start at 1 — and `go test ./...` runs packages in parallel. Two packages
+// that happen to share a test name (cmd/pg-partition and cmd/chat-partition
+// share four) then generate the same schema name at the same moment and one
+// fails with "schema already exists". The pid makes the name unique per binary,
+// which is the level the collision actually happens at.
+//
+// Identifiers are capped at 63 bytes by Postgres; 40 characters of test name
+// plus a pid and a counter stays well inside that.
+func schemaName(testName string, pid int, n int64) string {
 	var b strings.Builder
 	b.WriteString("t_")
 	for _, r := range strings.ToLower(testName) {
@@ -99,5 +110,5 @@ func schemaName(testName string, n int64) string {
 			b.WriteByte('_')
 		}
 	}
-	return fmt.Sprintf("%.40s_%d", b.String(), n)
+	return fmt.Sprintf("%.40s_%d_%d", b.String(), pid, n)
 }
