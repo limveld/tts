@@ -15,11 +15,19 @@ const twitchIRC = "irc.chat.twitch.tv:6697"
 
 // IRCClient maintains an anonymous read-only connection to Twitch chat and
 // dispatches each PRIVMSG to handle. It reconnects with backoff until ctx ends.
+//
+// onDelete and onClear receive Twitch's two tombstone commands and may be nil,
+// which is what the bot does when chat logging is off — nothing else in the bot
+// cares that a message was deleted. They are dispatched from the same read loop
+// as handle, in arrival order, which is the property the chat log depends on: a
+// CLEARMSG must never overtake the message it targets.
 type IRCClient struct {
-	channel string
-	logger  *log.Logger
-	rnd     *rand.Rand
-	handle  func(ChatMessage)
+	channel  string
+	logger   *log.Logger
+	rnd      *rand.Rand
+	handle   func(ChatMessage)
+	onDelete func(ChatDelete)
+	onClear  func(ChatClear)
 }
 
 func (c *IRCClient) Run(ctx context.Context) {
@@ -87,6 +95,22 @@ func (c *IRCClient) serve(ctx context.Context) error {
 		}
 		if m, ok := parsePrivmsg(line); ok {
 			c.handle(m)
+			continue
+		}
+		// The twitch.tv/commands capability requested above is what makes these
+		// two arrive at all. Dispatched here, in the same sequence as the PRIVMSGs
+		// around them, so ordering is a property of the read loop rather than
+		// something the consumer has to re-establish.
+		if c.onDelete != nil {
+			if d, ok := parseClearmsg(line); ok {
+				c.onDelete(d)
+				continue
+			}
+		}
+		if c.onClear != nil {
+			if cl, ok := parseClearchat(line); ok {
+				c.onClear(cl)
+			}
 		}
 	}
 	if err := sc.Err(); err != nil {
