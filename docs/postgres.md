@@ -311,3 +311,94 @@ further. The 05:00 dump is the only itemized archive beyond that, and it is
 pruned at 14 days — so in practice, history older than a year is gone. That is
 the trade; nobody's balance changes, but the story behind it stops being
 available.
+
+## The chat log
+
+Every line the bot sees is persisted to `chat_message`, along with tombstones for
+Twitch's `CLEARMSG` (one message deleted) and `CLEARCHAT` (a ban or timeout).
+The bot writes it asynchronously and can never be stalled by the database doing
+so — see `bot/chatlog.go` and [ADR-0003](adr/0003-chat-log.md).
+
+Turn it off with `-chat-log=false`. It is on by default because every line it is
+off for is a line that cannot be recovered later.
+
+### Retention: 90 days, and what survives
+
+`chat_message` is partitioned by day exactly like `ledger`, maintained by
+`cmd/chat-partition` at **05:30** — after the 05:00 dump and the ledger's 05:15
+pass.
+
+```sh
+mise run chat:partition:dry       # what a pass would do, changing nothing
+mise run chat:partition           # run one now
+mise run chat:partition:install   # install the daily agent
+mise run chat:partition:status
+mise run chat:partition:logs
+```
+
+One pass, in order:
+
+1. **provision** — gopartman creates tomorrow's child (and 14 days ahead)
+2. **fold** — each partition past the horizon is `DETACH`ed and its per-user
+   counts added to `chat_stats`, *in one transaction*
+3. **report** — `chat_folded`'s row counts are compared against `chat_stats`
+4. **drop** — the folded partitions
+
+Note step 3 **reports and does not gate**, which is the one real difference from
+the ledger's pass. The ledger refuses to drop anything until every balance is
+proved, because it is money. A chat count is not, and `-purge-user` moves the two
+totals apart legitimately — so a gate would turn every erasure request into a
+stuck nightly job.
+
+> **The dump is not an archive here.** `pg-backup.sh` keeps 14 days; chat
+> retention is 90. The dump is the recovery window for a bug in *this job*, not
+> a copy of the history it expires. **From day 91 the text is gone for good.**
+> `chat_stats` keeps the counts; nothing keeps the words.
+
+### Counting someone's messages
+
+`chat_stats` is written **only** by the fold, so it counts only what has already
+been dropped. The live rows are the other half:
+
+```sql
+SELECT COALESCE((SELECT messages FROM chat_stats WHERE user_id = :id), 0)
+     + (SELECT COUNT(*) FROM chat_message WHERE user_id = :id) AS total;
+```
+
+Either half alone is an undercount. There is deliberately no view hiding the
+seam — see ADR-0003 for why the counter is not maintained on the write path.
+
+### Moderation lookups
+
+```sql
+SELECT to_timestamp(ts), display, text, deleted_by
+  FROM chat_message
+ WHERE user_id = :id
+ ORDER BY ts_at DESC
+ LIMIT 50;
+```
+
+A tombstoned row keeps its text on purpose: the question is what somebody said
+before they were removed, and a redacted row answers it with a blank.
+`deleted_by` is `clearmsg` for a single deletion and `clearchat` for a ban or
+timeout; a `CLEARCHAT` marks the previous 24 hours of that user's lines, matching
+what Twitch actually clears.
+
+### Erasure requests
+
+```sh
+mise run chat:purge -- <user-id>        # add -dry-run to see the counts first
+```
+
+This is a real delete of both the live rows and the user's `chat_stats` row — a
+tombstone is not an erasure, since it deliberately keeps the text. Afterwards the
+next nightly pass prints a `NOTE:` about `chat_folded` and `chat_stats`
+disagreeing; that is expected and is why the comparison is a report.
+
+### When rows are stranded in `chat_message_default`
+
+Same cause and same fix as the ledger's, one table over:
+
+```sh
+mise run chat:partition:backfill
+```

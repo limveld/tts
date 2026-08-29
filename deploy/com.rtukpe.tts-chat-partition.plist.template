@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.rtukpe.tts-chat-partition</string>
+
+  <!-- __REPO__ / __LOGDIR__ / __TTS_DATABASE_URL__ are substituted by
+       deploy/service.sh. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/bin/chat-partition</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- /opt/homebrew/bin so libpq's helpers resolve the same way they do for
+         the backup agent. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>TTS_DATABASE_URL</key>
+    <string>__TTS_DATABASE_URL__</string>
+  </dict>
+
+  <!-- Daily at 05:30. Both offsets are safety properties rather than scheduling
+       preferences:
+
+         05:00  pg-backup.sh takes the dump that holds every line this job is
+                about to remove. Do not move this earlier than the backup, and do
+                not close the gap so far that a slow dump is still running.
+         05:15  pg-partition maintains the ledger. gopartman's advisory lock is
+                per-parent, so the two cannot actually deadlock — but they both
+                run partman's migrations and call Maintain, and keeping them
+                apart means a failure has one obvious owner.
+
+       Note that the backup only reaches fourteen days back while chat retention
+       is ninety, so the dump is a recovery window for a bug in *this* job, not
+       an archive of the history it expires. See docs/adr/0003-chat-log.md.
+
+       RunAtLoad is false on purpose: installing the agent must not immediately
+       run something destructive. Do a `mise run chat:partition:dry` first. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>5</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__LOGDIR__/tts-chat-partition.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOGDIR__/tts-chat-partition.err.log</string>
+</dict>
+</plist>

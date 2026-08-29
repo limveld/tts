@@ -3,7 +3,7 @@
 # Manage a component (server|bot) as a macOS launchd LaunchAgent (per-user, GUI
 # session so it has audio + GPU access).
 #
-# Usage: deploy/service.sh <server|bot|pgbackup|pgpartition> <command>
+# Usage: deploy/service.sh <server|bot|pgbackup|pgpartition|chatpartition> <command>
 #   install    render the plist, load & enable the agent (starts now and at login)
 #   uninstall  unload the agent and remove the plist
 #   start      load the agent (or restart it if already loaded)
@@ -21,6 +21,7 @@
 #           TTS_DATABASE_URL (a postgres:// DSN; empty = SQLite bot.db)
 #   pgbackup: TTS_DATABASE_URL (required for install)
 #   pgpartition: TTS_DATABASE_URL (required for install; must be postgres://)
+#   chatpartition: TTS_DATABASE_URL (required for install; must be postgres://)
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -40,7 +41,7 @@ TARGET="${1:-}"
 CMD="${2:-}"
 
 usage() {
-  echo "usage: $(basename "$0") <server|bot|pgbackup|pgpartition> <install|uninstall|start|stop|restart|status|logs|render>" >&2
+  echo "usage: $(basename "$0") <server|bot|pgbackup|pgpartition|chatpartition> <install|uninstall|start|stop|restart|status|logs|render>" >&2
   exit 1
 }
 
@@ -146,6 +147,41 @@ case "$TARGET" in
         echo "warning: the pgbackup agent is not installed." >&2
         echo "         This job drops ledger partitions at 05:15 and the 05:00 dump is" >&2
         echo "         the only itemized copy of the rows it removes." >&2
+        echo "         Install it with 'mise run db:backup:install'." >&2
+      fi
+    }
+    ;;
+  chatpartition)
+    LABEL="com.rtukpe.tts-chat-partition"
+    BIN="$REPO/bin/chat-partition"
+    LOGBASE="tts-chat-partition"
+    BUILD_HINT="chat:partition:build"
+    render() {
+      sed -e "s|__REPO__|$REPO|g" -e "s|__LOGDIR__|$LOGDIR|g" \
+          -e "s|__TTS_DATABASE_URL__|$TTS_DB_ESC|g" \
+          "$REPO/deploy/$LABEL.plist.template"
+    }
+    health() { echo "  (scheduled daily at 05:30, after the ledger's pass; see $LOGDIR/$LOGBASE.out.log)"; }
+    preflight() {
+      # Postgres-only by design, same as pgpartition: SQLite has no partitioning
+      # and gets no retention, so an agent installed against a SQLite DSN would
+      # fail every night forever.
+      case "${TTS_DATABASE_URL:-}" in
+        postgres://*|postgresql://*) ;;
+        *)
+          echo "error: set TTS_DATABASE_URL to the postgres:// DSN to maintain" >&2
+          echo "       (partitioning and retention are Postgres-only — see docs/adr/0003)" >&2
+          exit 1
+          ;;
+      esac
+      # Unlike the ledger's job, the dump is NOT an archive of what this removes:
+      # backups keep fourteen days and chat retention is ninety, so from day 91
+      # the text is gone for good. The backup is still worth having — it is the
+      # recovery window for a bug in this job — but the warning has to say which.
+      if [ ! -f "$HOME/Library/LaunchAgents/com.rtukpe.tts-pg-backup.plist" ]; then
+        echo "warning: the pgbackup agent is not installed." >&2
+        echo "         This job drops chat partitions at 05:30; without the 05:00 dump there" >&2
+        echo "         is no recovery at all from a bad fold." >&2
         echo "         Install it with 'mise run db:backup:install'." >&2
       fi
     }

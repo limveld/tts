@@ -276,3 +276,46 @@ run = "bash deploy/service.sh pgpartition status"
 [tasks."db:partition:logs"]
 description = "Follow the partition-maintenance agent's error log"
 run = "bash deploy/service.sh pgpartition logs"
+
+# ---- chat log -----------------------------------------------------------------
+#
+# The chat log's own partition maintenance, cmd/pg-partition's sibling. Separate
+# tasks rather than flags on the ledger's, because they run on separate schedules
+# against separate tables with separate retention. See docs/adr/0003-chat-log.md.
+
+[tasks."chat:partition:build"]
+description = "Build the chat-log partition-maintenance binary"
+run = "go build -o bin/chat-partition ./cmd/chat-partition"
+
+[tasks."chat:partition"]
+description = "Run one chat-log maintenance pass now (provision, fold into chat_stats, drop)"
+run = "go run ./cmd/chat-partition"
+
+[tasks."chat:partition:dry"]
+description = "Show what a chat-log maintenance pass would do, changing nothing"
+run = "go run ./cmd/chat-partition -dry-run"
+
+[tasks."chat:partition:backfill"]
+description = "Rescue rows stranded in chat_message_default (after a re-cutover, or a long agent outage)"
+run = "go run ./cmd/chat-partition -backfill"
+
+[tasks."chat:purge"]
+description = "Delete every trace of one user id from the chat log (an erasure request). Usage: mise run chat:purge -- <user-id>"
+run = "go run ./cmd/chat-partition -purge-user"
+
+[tasks."chat:partition:install"]
+description = "Install the daily 05:30 chat-log maintenance LaunchAgent (runs after the ledger's)"
+depends = ["chat:partition:build"]
+run = "bash deploy/service.sh chatpartition install"
+
+[tasks."chat:partition:uninstall"]
+description = "Remove the chat-log maintenance agent"
+run = "bash deploy/service.sh chatpartition uninstall"
+
+[tasks."chat:partition:status"]
+description = "Show the chat-log maintenance agent's state"
+run = "bash deploy/service.sh chatpartition status"
+
+[tasks."chat:partition:logs"]
+description = "Follow the chat-log maintenance agent's error log"
+run = "bash deploy/service.sh chatpartition logs"
