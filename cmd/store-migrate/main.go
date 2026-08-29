@@ -41,8 +41,8 @@ type migrateStore interface {
 }
 
 // tables is the copy order. Nothing here has foreign keys, so the order is for
-// readability rather than integrity — except that ledger carries explicit ids
-// and therefore needs the sequence reset afterwards.
+// readability rather than integrity — except that ledger and chat_message carry
+// explicit ids and therefore need their sequences reset afterwards.
 var tables = []struct {
 	name    string
 	columns []string
@@ -58,6 +58,16 @@ var tables = []struct {
 	{"connections_wins", []string{"user_id", "login", "display", "wins"}},
 	{"game_rounds", []string{"game", "room_id", "ends_at", "state", "updated_at"}},
 	{"ledger_folded", []string{"name", "from_ts", "through_ts", "rows", "delta", "folded_at"}},
+	// The chat log. chat_message is the second table whose Postgres side is
+	// partitioned, so like ledger it gains a derived ts_at on the way in — see
+	// insertStatement. ts_at is deliberately absent from the column list: it does
+	// not exist on SQLite, and the copier reads the source's columns.
+	{"chat_message", []string{
+		"id", "ts", "room_id", "msg_id", "user_id", "login", "display", "text",
+		"emotes", "is_mod", "is_sub", "is_vip", "is_broadcaster", "deleted_at", "deleted_by",
+	}},
+	{"chat_stats", []string{"user_id", "login", "display", "messages", "chars", "first_ts", "last_ts"}},
+	{"chat_folded", []string{"name", "from_ts", "through_ts", "rows", "folded_at"}},
 }
 
 // games must match bot/rounds.go's constants. A round left behind at cutover is
@@ -139,11 +149,13 @@ func run(args []string, out *os.File) error {
 			return err
 		}
 		if dstBackend == store.PostgresBackend {
-			next, err := resetLedgerSequence(dst)
-			if err != nil {
-				return err
+			for _, table := range []string{"ledger", "chat_message"} {
+				next, err := resetSequence(dst, table)
+				if err != nil {
+					return err
+				}
+				counts[table+"_sequence"] = next
 			}
-			counts["ledger_sequence"] = next
 		}
 		report(out, counts)
 	}

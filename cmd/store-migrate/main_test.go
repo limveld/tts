@@ -85,6 +85,19 @@ func seedSource(t *testing.T) string {
 			`"entrants":[{"userID":"u1","login":"bob","display":"Bob"}],"winner":-1}`)); err != nil {
 		t.Fatal(err)
 	}
+
+	// Chat lines, including a tombstoned one: the destination's chat_message is
+	// partitioned and derives ts_at from ts, so a copy that got that wrong would
+	// either fail on the NOT NULL or file every line under the day of the copy.
+	if err := s.LogMessages([]store.ChatMessage{
+		{TS: 1723312800, RoomID: "room1", MsgID: "c1", UserID: "u1", Login: "bob", Display: "Bob", Text: "hello", IsMod: true},
+		{TS: 1723312860, RoomID: "room1", MsgID: "c2", UserID: "u2", Login: "amy", Display: "Amy", Text: "hi", Emotes: "25:0-1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MarkDeleted("room1", "c2", 1723312900); err != nil {
+		t.Fatal(err)
+	}
 	return path
 }
 
@@ -137,6 +150,71 @@ func TestSequenceIsPastMaxID(t *testing.T) {
 	}
 	if got != maxBefore+1 {
 		t.Errorf("new ledger id=%d want %d (max+1)", got, maxBefore+1)
+	}
+}
+
+// chat_message is the second partitioned table, so the copy has to derive its
+// ts_at the same way the ledger's is derived. Getting it wrong has two failure
+// modes and this catches both: a missing ts_at trips the NOT NULL, and a
+// defaulted one files every copied line under the day of the copy, where the
+// history it claims to be is unreachable.
+func TestChatMessagesSurviveTheCopy(t *testing.T) {
+	dsn := storetest.TempSchemaDSN(t, storetest.PostgresDSN(t))
+	src := seedSource(t)
+
+	if out, err := runTool(t, "-from", src, "-to", dsn); err != nil {
+		t.Fatalf("copy: %v\n%s", err, out)
+	}
+
+	dst, _, err := open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dst.Close()
+
+	var total, mismatched int
+	if err := dst.DB().QueryRow(
+		`SELECT COUNT(*), COUNT(*) FILTER (WHERE ts_at <> to_timestamp(ts)) FROM chat_message`,
+	).Scan(&total, &mismatched); err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 {
+		t.Fatalf("copied %d chat rows want 2", total)
+	}
+	if mismatched != 0 {
+		t.Errorf("%d of %d copied rows have ts_at out of step with ts", mismatched, total)
+	}
+
+	// Every column, including the tombstone and the role bits — a copier that
+	// dropped one would still pass a row count.
+	var text, emotes, deletedBy string
+	var isMod bool
+	var deletedAt int64
+	if err := dst.DB().QueryRow(
+		`SELECT text, emotes, is_mod, deleted_at, deleted_by FROM chat_message WHERE msg_id = 'c2'`,
+	).Scan(&text, &emotes, &isMod, &deletedAt, &deletedBy); err != nil {
+		t.Fatal(err)
+	}
+	if text != "hi" || emotes != "25:0-1" || isMod {
+		t.Errorf("c2 = text %q emotes %q is_mod %v", text, emotes, isMod)
+	}
+	if deletedAt != 1723312900 || deletedBy != "clearmsg" {
+		t.Errorf("c2 tombstone = %d/%q, want it carried across the copy", deletedAt, deletedBy)
+	}
+
+	// And the sequence, or the first line spoken after cutover collides.
+	var maxBefore, got int64
+	if err := dst.DB().QueryRow(`SELECT MAX(id) FROM chat_message`).Scan(&maxBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := dst.DB().QueryRow(
+		`INSERT INTO chat_message (ts, ts_at, room_id, msg_id, user_id, login, display, text)
+		 VALUES (0, to_timestamp(0), 'room1', 'after', 'u1', 'bob', 'Bob', 'hi') RETURNING id`,
+	).Scan(&got); err != nil {
+		t.Fatalf("first chat line after copy failed — sequence not reset: %v", err)
+	}
+	if got != maxBefore+1 {
+		t.Errorf("new chat_message id=%d want %d (max+1)", got, maxBefore+1)
 	}
 }
 

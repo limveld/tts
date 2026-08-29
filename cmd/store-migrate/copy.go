@@ -85,18 +85,35 @@ func copyAll(src, dst migrateStore, dstBackend store.Backend) (map[string]int64,
 //
 //   - game_rounds.state is cast to jsonb: it arrives as text from SQLite, and
 //     JSONB won't take it otherwise.
-//   - ledger gains ts_at, the partition key, which exists only on Postgres. It
-//     is derived rather than copied — the same to_timestamp(ts) every INSERT in
-//     store/postgres/points.go writes — and it re-uses the ts placeholder rather
-//     than binding a seventh argument, so the caller's row-to-args loop stays a
-//     straight copy of the source columns.
+//   - ledger and chat_message gain ts_at, their partition key, which exists only
+//     on Postgres. It is derived rather than copied — the same to_timestamp(ts)
+//     every INSERT in store/postgres writes — and it re-uses the ts placeholder
+//     rather than binding another argument, so the caller's row-to-args loop
+//     stays a straight copy of the source columns.
 //
-// Without that a copy into a partitioned ledger fails outright on the NOT NULL,
+// Without that a copy into a partitioned table fails outright on the NOT NULL,
 // which is the good outcome: the alternative, a DEFAULT, would put every copied
 // row in the partition for the day of the copy.
+// boolColumns are the columns Postgres declares BOOLEAN. SQLite has no boolean
+// type and stores them as INTEGER 0/1, so a row read out of SQLite arrives here
+// as int64 — which pgx refuses for a bool parameter ("cannot find encode plan"),
+// and refuses at encode time, before any cast in the statement could help.
+//
+// ::int::boolean fixes it by changing what pgx is asked for rather than what it
+// is given: Postgres infers the parameter as int4 from the first cast, the int64
+// encodes cleanly, and the second cast lands it in the column. The reverse
+// direction needs nothing — a Go bool is a valid SQLite parameter.
+//
+// A column set rather than a table/column pair because these four names are
+// booleans wherever they appear, and a bare name that is a boolean in one table
+// and an integer in another is a schema worth fixing rather than working around.
+var boolColumns = map[string]bool{
+	"is_mod": true, "is_sub": true, "is_vip": true, "is_broadcaster": true,
+}
+
 func insertStatement(table string, columns []string, n int, backend store.Backend) (string, []any) {
 	pg := backend == store.PostgresBackend
-	derivedTsAt := pg && table == "ledger"
+	derivedTsAt := pg && (table == "ledger" || table == "chat_message")
 
 	var b strings.Builder
 	b.WriteString("INSERT INTO ")
@@ -128,6 +145,9 @@ func insertStatement(table string, columns []string, n int, backend store.Backen
 					b.WriteString("::bigint")
 					tsArg = arg
 				}
+				if boolColumns[col] {
+					b.WriteString("::int::boolean")
+				}
 				arg++
 			} else {
 				b.WriteByte('?')
@@ -144,19 +164,23 @@ func insertStatement(table string, columns []string, n int, backend store.Backen
 	return b.String(), make([]any, 0, n*len(columns))
 }
 
-// resetLedgerSequence moves the identity sequence past the highest copied id and
+// resetSequence moves a table's identity sequence past the highest copied id and
 // returns the next value it will hand out.
 //
-// Miss this and the first live Credit after cutover dies on a duplicate key —
+// Miss this and the first live insert after cutover dies on a duplicate key —
 // the single easiest thing to forget here and the most embarrassing to discover
-// in production, because everything looks fine until someone earns a mark.
-func resetLedgerSequence(dst migrateStore) (int64, error) {
+// in production, because everything looks fine until someone earns a mark or
+// says something.
+//
+// The table name is interpolated because pg_get_serial_sequence takes it as a
+// value while MAX(id) needs it as an identifier; both callers pass a constant.
+func resetSequence(dst migrateStore, table string) (int64, error) {
 	var next int64
-	err := dst.DB().QueryRow(
-		`SELECT setval(pg_get_serial_sequence('ledger', 'id'),
-		               COALESCE((SELECT MAX(id) FROM ledger), 0) + 1, false)`).Scan(&next)
+	err := dst.DB().QueryRow(fmt.Sprintf(
+		`SELECT setval(pg_get_serial_sequence('%s', 'id'),
+		               COALESCE((SELECT MAX(id) FROM %s), 0) + 1, false)`, table, table)).Scan(&next)
 	if err != nil {
-		return 0, fmt.Errorf("resetting ledger sequence: %w", err)
+		return 0, fmt.Errorf("resetting %s sequence: %w", table, err)
 	}
 	return next, nil
 }
