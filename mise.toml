@@ -23,7 +23,12 @@ mise run bot:service:restart
 
 [tasks."server:build"]
 description = "Build the TTS server binary"
-sources = ["server/*.go", "sfxlib/*.go", "go.mod"] # see bot:build — sources must cover every dep
+# Every input the binary embeds, not just the Go files. server/web is go:embed-ed,
+# so a CSS- or JS-only overlay change leaves the fingerprint unchanged, the task
+# no-ops, and server:service:restart relaunches a binary with the old page in it —
+# with nothing to suggest why the edit did nothing. See bot:build for the same
+# trap on the Go side.
+sources = ["server/*.go", "server/web/**/*", "sfxlib/*.go", "go.mod"]
 outputs = ["bin/tts-server"]
 run = "go build -o bin/tts-server ./server"
 
@@ -80,7 +85,9 @@ description = "Build the Twitch bot binary"
 # Every package `go list -deps ./bot` reports, not just bot/ — a twitch/ or store/
 # change that isn't listed here leaves the fingerprint unchanged, so the task
 # no-ops and bot:service:restart relaunches the stale binary.
-sources = ["bot/*.go", "twitch/*.go", "store/**/*.go", "sfxlib/*.go", "go.mod"]
+# store/**/migrations/*.sql are go:embed-ed too, so a migration-only change has to
+# count as a source or the bot restarts without it.
+sources = ["bot/*.go", "twitch/*.go", "store/**/*.go", "store/**/migrations/*.sql", "sfxlib/*.go", "*.toml", "go.mod"]
 outputs = ["bin/tts-bot"]
 run = "go build -o bin/tts-bot ./bot"
 
