@@ -204,3 +204,33 @@ func TestOverlayPageRequiresToken(t *testing.T) {
 		t.Errorf("GET /overlay?token=secret = %d, want 200", resp.StatusCode)
 	}
 }
+
+// TestOverlayMazeStateIsCachedForReplay pins the maze's place in stateKinds.
+//
+// The maze needs the replay more than the other games do: a round runs for
+// minutes, so an OBS scene switch or a browser-source reload part-way through
+// would otherwise come back to an empty stage and stay empty until the next
+// cycle. A kind missing from stateKinds is also rejected outright, so leaving it
+// out breaks the game silently rather than loudly.
+func TestOverlayMazeStateIsCachedForReplay(t *testing.T) {
+	srv := newTestOverlayServer(t, "")
+
+	if pr := postState(t, srv.URL, `{"kind":"maze","data":{"phase":"racing","cycle":7}}`); pr.StatusCode != http.StatusNoContent {
+		t.Fatalf("POST maze state = %d, want 204 — is \"maze\" in stateKinds?", pr.StatusCode)
+	}
+
+	// A client connecting afterwards must still be handed the board.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/overlay/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("connect events: %v", err)
+	}
+	defer resp.Body.Close()
+
+	got := readSSEEvent(t, bufio.NewReader(resp.Body), "maze")
+	if !strings.Contains(got, `"cycle":7`) {
+		t.Errorf("replayed maze event = %q, want the cached board", got)
+	}
+}

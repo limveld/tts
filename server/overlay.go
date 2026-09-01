@@ -38,17 +38,18 @@ type Overlay struct {
 	mu      sync.Mutex
 	clients map[chan []byte]struct{} // connected SSE clients
 	acks    map[int64]chan struct{}  // pending playback acks, keyed by clip id
-	// lastState holds the most recent payload pushed for each render kind
-	// (gamble/depth/wordle), replayed to every newly-connected client so an OBS
-	// source reload re-renders immediately. Audio (play/stop) is transient and
-	// never cached.
+	// lastState holds the most recent payload pushed for each render kind,
+	// replayed to every newly-connected client so an OBS source reload re-renders
+	// immediately. Audio (play/stop) is transient and never cached. The maze
+	// leans on this hardest: a scene switch part-way through a five-minute round
+	// would otherwise come back to an empty stage.
 	lastState map[string][]byte
 }
 
 // stateKinds are the render kinds accepted by POST /overlay/state that are cached
 // and replayed on reconnect. Audio and the transient "notify" toast are not state
 // kinds — they're shown once and never replayed.
-var stateKinds = map[string]bool{"gamble": true, "depth": true, "wordle": true, "connections": true}
+var stateKinds = map[string]bool{"gamble": true, "depth": true, "wordle": true, "connections": true, "maze": true}
 
 // NewOverlay builds the hub. tmpDir is where the queue writes tts-<id>.wav files.
 func NewOverlay(tmpDir, token string, logger *log.Logger) *Overlay {

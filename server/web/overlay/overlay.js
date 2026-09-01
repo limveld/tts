@@ -345,6 +345,220 @@ function showNextNotify() {
   }, 5000);
 }
 
+// --- torch maze -------------------------------------------------------------
+// The bot sends a grid of cells carrying wall bitmasks; this expands it to a
+// (2n+1) square of blocks, which is what makes it read as an arcade maze rather
+// than a diagram. Cells the bot withheld simply have nothing to draw: unsprung
+// traps and the walls of unwalked cells never arrive, so the fog cannot be
+// undone by reading the page.
+const mazeEl = document.getElementById('maze');
+let mazeTimer = null;
+let mazePrev = null; // previous payload, for change flashes
+
+const MAZE_SEATS = ['#e6482e', '#4fa4ff', '#3fbf5f', '#e8c547', '#b96fe0'];
+
+function mazeCell(s) {
+  if (!s || s.length < 2) return null;
+  const x = s.charCodeAt(0) - 65;
+  const y = parseInt(s.slice(1), 10) - 1;
+  return (x >= 0 && y >= 0) ? {x: x, y: y} : null;
+}
+
+function mazeOrdinal(n) {
+  const t = n % 100;
+  if (t > 10 && t < 14) return n + 'th';
+  return n + (['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+}
+
+// mazeAt positions an element over the grid in tile units, so several runners can
+// share a cell without the grid reflowing.
+function mazeAt(col, row, cls, body) {
+  return '<span class="' + cls + '" style="left:calc(var(--m-tile)*' + col.toFixed(3) +
+         ');top:calc(var(--m-tile)*' + row.toFixed(3) + ')">' + body + '</span>';
+}
+
+// mazeBlocks turns cells into the block grid. Wall bits are N=1 E=2 S=4 W=8.
+function mazeBlocks(d, prev) {
+  const n = d.size, span = 2 * n + 1;
+  const t = new Array(span * span).fill('unknown');
+  const at = (col, row) => row * span + col;
+
+  // The outer wall is drawn from the first cycle. It gives the arena a shape to
+  // read before anything is explored and gives away nothing — the boundary is
+  // closed on every board there is.
+  for (let i = 0; i < span; i++) {
+    t[at(i, 0)] = 'wall'; t[at(i, span - 1)] = 'wall';
+    t[at(0, i)] = 'wall'; t[at(span - 1, i)] = 'wall';
+  }
+
+  const fresh = {};
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const c = d.cells[y * n + x] || {};
+      const col = 2 * x + 1, row = 2 * y + 1;
+
+      if (c.state === 'revealed') {
+        t[at(col, row)] = 'floor';
+        const w = c.walls || 0;
+        const edge = (i, walled) => {
+          // A wall known from either side stays a wall; the two cells sharing it
+          // always agree, so this only guards against ordering.
+          if (walled) t[i] = 'wall';
+          else if (t[i] !== 'wall') t[i] = 'floor';
+        };
+        edge(at(col, row - 1), w & 1);
+        edge(at(col + 1, row), w & 2);
+        edge(at(col, row + 1), w & 4);
+        edge(at(col - 1, row), w & 8);
+        // Corner posts next to a known cell are structural, never passable.
+        [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(o => {
+          const i = at(col + o[0], row + o[1]);
+          if (t[i] === 'unknown') t[i] = 'wall';
+        });
+        const was = prev && prev.cells && prev.cells[y * n + x];
+        if (was && was.state !== 'revealed') fresh[at(col, row)] = true;
+      } else if (c.state === 'frontier' && t[at(col, row)] === 'unknown') {
+        t[at(col, row)] = 'frontier';
+      }
+    }
+  }
+  return {span: span, tiles: t, fresh: fresh};
+}
+
+function renderMaze(d) {
+  if (mazeTimer) { clearInterval(mazeTimer); mazeTimer = null; }
+
+  if (!d || d.hidden) {
+    mazeEl.hidden = true; mazeEl.innerHTML = ''; mazePrev = null; return;
+  }
+  mazeEl.hidden = false;
+  mazeEl.className = d.display === 'panel' ? 'm-panel' : 'm-full';
+
+  const prev = mazePrev;
+  const g = mazeBlocks(d, prev);
+  const n = d.size;
+
+  let board = '<div class="m-grid" style="--m-span:' + g.span + '">';
+  for (let i = 0; i < g.tiles.length; i++) {
+    board += '<i class="m-t m-' + g.tiles[i] + (g.fresh[i] ? ' m-new' : '') + '"></i>';
+  }
+
+  // Coordinate rules on the wall frame, so a callout naming C4 can be followed.
+  for (let x = 0; x < n; x++) board += mazeAt(2 * x + 1.5, 0.5, 'm-axis', String.fromCharCode(65 + x));
+  for (let y = 0; y < n; y++) board += mazeAt(0.5, 2 * y + 1.5, 'm-axis', String(y + 1));
+
+  // Objectives are drawn through the fog on purpose: it hides the route, not the
+  // destination. Without that the scramble for a scarce key could never happen —
+  // nobody would know there was anything to race for.
+  const mark = (cellStr, cls, glyph) => {
+    const c = mazeCell(cellStr);
+    return c ? mazeAt(2 * c.x + 1.5, 2 * c.y + 1.5, 'm-mark ' + cls, glyph) : '';
+  };
+  board += mark(d.start, 'm-start', '◦');
+  board += mark(d.exit, 'm-exit', '🚪');
+  (d.keys || []).forEach(k => { board += mark(k, 'm-key', '🔑'); });
+  // Only sprung traps are ever sent. The tile stays marked so the board keeps a
+  // record of what the first runner through paid for.
+  (d.traps || []).forEach(tr => { board += mark(tr.at, 'm-trap', tr.kind === 'spike' ? '💀' : '🐻'); });
+
+  const players = d.players || [];
+  players.forEach(p => {
+    const c = mazeCell(p.at);
+    if (!c || p.place) return; // a finished runner has left the maze
+    // Fixed sub-slot per seat, so a player's dot sits in the same relative spot
+    // whichever cell they are in and they can follow themselves in a pile-up.
+    const sx = (p.seat % 3 + 0.5) / 3, sy = (Math.floor(p.seat / 3) + 0.5) / 2;
+    const cls = 'm-dot' + (p.hasKey ? ' m-carrying' : '') + (p.stuckFor ? ' m-stuck' : '');
+    board += '<span class="' + cls + '" style="color:' + MAZE_SEATS[p.seat % MAZE_SEATS.length] +
+             ';left:calc(var(--m-tile)*' + (2 * c.x + 1 + sx).toFixed(3) +
+             ');top:calc(var(--m-tile)*' + (2 * c.y + 1 + sy).toFixed(3) + ')"></span>';
+  });
+  board += '</div>';
+
+  // --- side panel ---
+  const joining = d.phase === 'joining';
+  const done = d.phase === 'done';
+  let head = '<div class="m-title">TORCH MAZE</div>';
+  head += '<div class="m-cycle">' + (joining ? 'SEATS OPEN' :
+          done ? 'ROUND OVER' : 'CYCLE ' + d.cycle + ' / ' + d.maxCycles) + '</div>';
+  if (!done) {
+    head += '<div class="m-clock" id="m-clock"></div>' +
+            '<div class="m-bar" id="m-bar"><i id="m-fill"></i></div>';
+  }
+
+  let rows = '<div class="m-rows">';
+  players.forEach(p => {
+    const wasP = prev && (prev.players || []).find(q => q.seat === p.seat);
+    // Flash a row whose state actually moved. The payload carries no event list,
+    // so the change itself is the signal.
+    const moved = wasP && (wasP.at !== p.at || wasP.hasKey !== p.hasKey ||
+                           wasP.stuckFor !== p.stuckFor || wasP.place !== p.place);
+    let token = '·';
+    if (p.place) token = '🏁' + mazeOrdinal(p.place);
+    else if (p.stuckFor) token = '🐻×' + p.stuckFor;
+    else if (p.hasKey) token = '🔑';
+    rows += '<div class="m-row' + (moved ? ' m-changed' : '') + (p.place ? ' m-done' : '') + '">' +
+            '<span class="m-swatch" style="background:' + MAZE_SEATS[p.seat % MAZE_SEATS.length] + '"></span>' +
+            '<span class="m-name">' + escHtml(p.name || '') + '</span>' +
+            '<span class="m-token">' + token + '</span>' +
+            // Locked says a move is in, never which one: showing intent would let
+            // a fast connection intercept a slow one every single cycle.
+            '<span class="m-lock' + (p.locked ? ' m-on' : '') + '"></span>' +
+            '</div>';
+  });
+  for (let i = players.length; i < (d.seats || 5); i++) {
+    rows += '<div class="m-row m-done"><span class="m-swatch"></span><span class="m-name">—</span></div>';
+  }
+  rows += '</div>';
+
+  // The rolling play-by-play. It lives in the panel rather than going through the
+  // notify toasts: those are serialised at ~5.5s each, so a busy cycle would back
+  // the queue up and the "news" would arrive minutes after the board moved on.
+  // Toasts are kept for the two rare beats worth interrupting for.
+  let feed = '';
+  (d.feed || []).forEach((line, i, all) => {
+    const age = all.length - 1 - i; // newest last, older entries fade back
+    feed += '<div class="m-feed-line" style="opacity:' + Math.max(0.35, 1 - age * 0.16).toFixed(2) + '">' +
+            escHtml(line) + '</div>';
+  });
+  if (feed) feed = '<div class="m-feed">' + feed + '</div>';
+
+  let foot = '';
+  if (joining) {
+    foot = '<div class="m-hint">!go w a s d — take a seat</div>';
+  } else if (done) {
+    const placed = players.filter(p => p.place).sort((a, b) => a.place - b.place);
+    foot = '<div class="m-banner">' + (placed.length
+      ? placed.map(p => mazeOrdinal(p.place) + ' ' + escHtml(p.name)).join('<br>')
+      : 'nobody made it out') + '</div>';
+  } else {
+    const left = (d.keys || []).length;
+    foot = '<div class="m-hint">' + (left === 0 ? 'no keys left on the board'
+      : left + (left === 1 ? ' key left' : ' keys left')) + '</div>';
+  }
+
+  mazeEl.innerHTML = board + '<div class="m-side">' + head + rows + feed + foot + '</div>';
+  mazePrev = d;
+
+  // The countdown restarts on every push, because the bot pushes exactly once per
+  // cycle. It is the one element that has to be unmissable: it is how a player
+  // knows how long they have to lock a move in, or to change their mind.
+  if (!done && d.tickMs > 0) {
+    const clock = document.getElementById('m-clock');
+    const bar = document.getElementById('m-bar');
+    const fill = document.getElementById('m-fill');
+    const started = Date.now();
+    const tick = () => {
+      const left = Math.max(0, d.tickMs - (Date.now() - started));
+      clock.textContent = (left / 1000).toFixed(1) + 's';
+      fill.style.width = (100 * left / d.tickMs) + '%';
+      bar.classList.toggle('m-urgent', left < 2000);
+    };
+    tick();
+    mazeTimer = setInterval(tick, 80);
+  }
+}
+
 // --- SSE transport ----------------------------------------------------------
 function connect() {
   const es = new EventSource('/overlay/events' + q);
@@ -354,6 +568,7 @@ function connect() {
   es.addEventListener('depth', ev => renderDepth(JSON.parse(ev.data)));
   es.addEventListener('wordle', ev => renderWordle(JSON.parse(ev.data)));
   es.addEventListener('connections', ev => renderConnections(JSON.parse(ev.data)));
+  es.addEventListener('maze', ev => renderMaze(JSON.parse(ev.data)));
   es.addEventListener('notify', ev => enqueueNotify(JSON.parse(ev.data)));
   // EventSource auto-reconnects on error; nothing to do.
 }

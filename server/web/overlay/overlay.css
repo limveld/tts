@@ -8,6 +8,19 @@
   --gold: #d4af37;
   --serif: "Cinzel", Georgia, serif;
   --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  /* The maze's chrome only; usernames stay in --mono, because Press Start 2P is
+     very wide and a long name would break the HUD row. */
+  --pixel: "Press Start 2P", "JetBrains Mono", monospace;
+  /* Torch-maze palette, in a deliberate brightness ramp: unexplored is black,
+     explored corridor is the brightest thing on the board (it is what the torch
+     has lit), and stone sits between. The first attempt had floor and fog within
+     a few points of each other, which made explored ground invisible — the one
+     thing the whole fog mechanic exists to show off. */
+  --m-wall: #29344c;
+  --m-floor: #46598a;
+  --m-fog: #000000;
+  --m-frontier: #17243b;
+  --m-frame: #4a5372;
 }
 
 html, body {
@@ -366,3 +379,179 @@ html, body {
   color: var(--text);
   opacity: 0.85;
 }
+
+/* --- torch maze ------------------------------------------------------------
+   The board arrives as a grid of cells carrying wall bitmasks; the renderer
+   expands it to a (2n+1) square grid of blocks, which is what gives it the
+   chunky arcade look. Two layouts: .m-panel tucks into the same corner the other
+   games use, .m-full claims the stage for a dedicated scene. --m-tile is the
+   only size knob and everything else is derived from it. */
+#maze {
+  position: absolute;
+  display: flex;
+  gap: 22px;
+  align-items: flex-start;
+  font-family: var(--pixel);
+  color: var(--text);
+}
+#maze[hidden] { display: none; }
+
+#maze.m-full {
+  --m-tile: 34px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 26px 30px;
+  background: var(--panel-bg);
+  border: 3px solid var(--m-frame);
+  box-shadow: 0 0 0 3px #000, 8px 8px 0 0 rgba(0, 0, 0, 0.45);
+}
+#maze.m-panel {
+  --m-tile: 17px;
+  top: 40px;
+  right: 24px;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--panel-bg);
+  border: 2px solid var(--m-frame);
+}
+
+#maze .m-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--m-span), var(--m-tile));
+  grid-auto-rows: var(--m-tile);
+  /* Any sprite work later should stay blocky rather than get smoothed. */
+  image-rendering: pixelated;
+}
+
+/* Cell blocks. "unknown" is the fog: nothing about that cell has been sent, so
+   there is nothing to draw. "frontier" is a cell someone has seen an opening
+   into — known to exist and known to be reachable, walls still unknown. */
+#maze .m-t { display: block; width: var(--m-tile); height: var(--m-tile); }
+#maze .m-unknown  { background: var(--m-fog); }
+#maze .m-frontier { background: var(--m-frontier); box-shadow: inset 0 0 0 2px #22355c; }
+#maze .m-wall     { background: var(--m-wall); box-shadow: inset -2px -2px 0 0 #0d1119, inset 2px 2px 0 0 #2b3752; }
+#maze .m-floor    { background: var(--m-floor); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05); }
+#maze .m-new      { animation: mReveal 0.45s ease-out; }
+@keyframes mReveal {
+  from { background: #b9e6ff; }
+  to   { background: var(--m-floor); }
+}
+
+/* Markers and runners are positioned over the grid rather than placed in it, so
+   several can share one cell without the grid reflowing. */
+#maze .m-mark, #maze .m-dot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+#maze .m-mark {
+  font-size: calc(var(--m-tile) * 0.62);
+  line-height: 1;
+  font-family: var(--mono);
+}
+#maze .m-exit  { filter: drop-shadow(0 0 6px #ffd76a); }
+#maze .m-key   { filter: drop-shadow(0 0 5px #ffe071); animation: mKey 1.8s ease-in-out infinite; }
+@keyframes mKey { 50% { transform: translate(-50%, -58%); } }
+#maze .m-start { opacity: 0.55; font-size: calc(var(--m-tile) * 0.5); }
+#maze .m-trap  { opacity: 0.75; font-size: calc(var(--m-tile) * 0.5); }
+
+#maze .m-dot {
+  width: calc(var(--m-tile) * 0.27);
+  height: calc(var(--m-tile) * 0.27);
+  border: 1px solid rgba(0, 0, 0, 0.75);
+  box-shadow: 0 0 5px currentColor;
+  background: currentColor;
+}
+#maze .m-dot.m-carrying { box-shadow: 0 0 4px currentColor, 0 0 0 2px #ffe071; }
+#maze .m-dot.m-stuck    { opacity: 0.5; }
+#maze .m-dot.m-out      { display: none; }
+
+/* Coordinate rules, so a callout naming C4 can be followed on screen. */
+#maze .m-axis {
+  position: absolute;
+  font-size: calc(var(--m-tile) * 0.34);
+  color: #7c88ab;
+  font-family: var(--mono);
+  transform: translate(-50%, -50%);
+}
+
+/* --- side panel --- */
+#maze .m-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: calc(var(--m-tile) * 8.5);
+}
+#maze .m-title {
+  font-size: calc(var(--m-tile) * 0.36);
+  color: var(--gold);
+  letter-spacing: 1px;
+}
+#maze .m-cycle { font-size: calc(var(--m-tile) * 0.3); color: #8d97b5; }
+
+/* The countdown is the one element that has to be unmissable: it is the whole
+   reason a player knows how long they have left to lock a move in or correct it. */
+#maze .m-clock { font-size: calc(var(--m-tile) * 0.62); color: var(--text); }
+#maze .m-bar {
+  height: calc(var(--m-tile) * 0.22);
+  background: #1a1d29;
+  border: 1px solid #39405c;
+  overflow: hidden;
+}
+#maze .m-bar > i { display: block; height: 100%; background: var(--gold); }
+#maze .m-bar.m-urgent > i { background: #e6482e; }
+
+#maze .m-rows { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+#maze .m-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border-left: 3px solid transparent;
+  font-size: calc(var(--m-tile) * 0.3);
+}
+#maze .m-row.m-changed { animation: mFlash 0.7s ease-out; }
+@keyframes mFlash {
+  from { background: rgba(212, 175, 55, 0.5); }
+  to   { background: rgba(255, 255, 255, 0.04); }
+}
+#maze .m-swatch { width: calc(var(--m-tile) * 0.26); height: calc(var(--m-tile) * 0.26); flex: none; }
+#maze .m-name {
+  font-family: var(--mono);
+  font-size: calc(var(--m-tile) * 0.38);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#maze .m-token { font-family: var(--mono); font-size: calc(var(--m-tile) * 0.36); }
+/* Locked shows only *that* a move is in, never which one. */
+#maze .m-lock { width: calc(var(--m-tile) * 0.2); height: calc(var(--m-tile) * 0.2); flex: none; background: #2c3145; }
+#maze .m-lock.m-on { background: var(--gold); box-shadow: 0 0 5px var(--gold); }
+#maze .m-row.m-done { opacity: 0.62; }
+
+/* Play-by-play. Terse on purpose: it is there so a viewer can see that things
+   are happening without reading chat, not to be read word for word. */
+#maze .m-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #2b3145;
+  font-family: var(--mono);
+  font-size: calc(var(--m-tile) * 0.33);
+  color: #aab3cc;
+}
+#maze .m-feed-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+#maze .m-banner {
+  margin-top: 2px;
+  font-size: calc(var(--m-tile) * 0.32);
+  line-height: 1.7;
+  color: var(--gold);
+}
+#maze .m-hint { font-family: var(--mono); font-size: calc(var(--m-tile) * 0.34); color: #8d97b5; }
