@@ -406,15 +406,18 @@ html, body {
   border: 3px solid var(--m-frame);
   box-shadow: 0 0 0 3px #000, 8px 8px 0 0 rgba(0, 0, 0, 0.45);
 }
+/* Panel mode: the board and a timer, stacked. No side column — see renderMaze. */
 #maze.m-panel {
-  --m-tile: 17px;
+  --m-tile: 19px;
   top: 40px;
   right: 24px;
-  gap: 14px;
-  padding: 14px 16px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
   background: var(--panel-bg);
   border: 2px solid var(--m-frame);
 }
+#maze.m-panel .m-bar { width: 100%; height: calc(var(--m-tile) * 0.26); }
 
 #maze .m-grid {
   position: relative;

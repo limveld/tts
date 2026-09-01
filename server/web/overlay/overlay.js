@@ -433,7 +433,8 @@ function renderMaze(d) {
     mazeEl.hidden = true; mazeEl.innerHTML = ''; mazePrev = null; return;
   }
   mazeEl.hidden = false;
-  mazeEl.className = d.display === 'panel' ? 'm-panel' : 'm-full';
+  const panel = d.display === 'panel';
+  mazeEl.className = panel ? 'm-panel' : 'm-full';
 
   const prev = mazePrev;
   const g = mazeBlocks(d, prev);
@@ -477,8 +478,23 @@ function renderMaze(d) {
   board += '</div>';
 
   // --- side panel ---
+  //
+  // Panel mode is the board and a timer strip, nothing else. It sits in the
+  // corner over whatever else is on screen, so it earns its space by showing the
+  // game rather than a scoreboard about it — and the one thing a player cannot
+  // play without is how long is left to lock a move in. Names, key state, the
+  // chosen directions and the feed are full-mode furniture.
   const joining = d.phase === 'joining';
   const done = d.phase === 'done';
+
+  if (panel) {
+    mazeEl.innerHTML = board +
+      (done ? '' : '<div class="m-bar" id="m-bar"><i id="m-fill"></i></div>');
+    mazePrev = d;
+    startMazeCountdown(d, done);
+    return;
+  }
+
   let head = '<div class="m-title">TORCH MAZE</div>';
   head += '<div class="m-cycle">' + (joining ? 'SEATS OPEN' :
           done ? 'ROUND OVER' : 'CYCLE ' + d.cycle + ' / ' + d.maxCycles) + '</div>';
@@ -543,23 +559,30 @@ function renderMaze(d) {
   mazeEl.innerHTML = board + '<div class="m-side">' + head + rows + feed + foot + '</div>';
   mazePrev = d;
 
-  // The countdown restarts on every push, because the bot pushes exactly once per
-  // cycle. It is the one element that has to be unmissable: it is how a player
-  // knows how long they have to lock a move in, or to change their mind.
-  if (!done && d.tickMs > 0) {
-    const clock = document.getElementById('m-clock');
-    const bar = document.getElementById('m-bar');
-    const fill = document.getElementById('m-fill');
-    const started = Date.now();
-    const tick = () => {
-      const left = Math.max(0, d.tickMs - (Date.now() - started));
-      clock.textContent = (left / 1000).toFixed(1) + 's';
-      fill.style.width = (100 * left / d.tickMs) + '%';
-      bar.classList.toggle('m-urgent', left < 2000);
-    };
-    tick();
-    mazeTimer = setInterval(tick, 80);
-  }
+  startMazeCountdown(d, done);
+}
+
+// startMazeCountdown restarts the cycle timer. The bot pushes once per cycle plus
+// once per move, so this re-arms often; that is fine, since every push carries the
+// same tickMs and the timer is the thing that has to be unmissable.
+//
+// The numeric readout is full-mode only, so its element is looked up rather than
+// assumed — panel mode draws the bar alone.
+function startMazeCountdown(d, done) {
+  if (done || !(d.tickMs > 0)) return;
+  const clock = document.getElementById('m-clock');
+  const bar = document.getElementById('m-bar');
+  const fill = document.getElementById('m-fill');
+  if (!bar || !fill) return;
+  const started = Date.now();
+  const tick = () => {
+    const left = Math.max(0, d.tickMs - (Date.now() - started));
+    if (clock) clock.textContent = (left / 1000).toFixed(1) + 's';
+    fill.style.width = (100 * left / d.tickMs) + '%';
+    bar.classList.toggle('m-urgent', left < 2000);
+  };
+  tick();
+  mazeTimer = setInterval(tick, 80);
 }
 
 // --- SSE transport ----------------------------------------------------------
