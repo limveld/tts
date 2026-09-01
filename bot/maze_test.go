@@ -1532,3 +1532,60 @@ func TestMazeSeatWrapsPastThePalette(t *testing.T) {
 		t.Error("seat wrapping does not return to the first colour")
 	}
 }
+
+// TestMazeRoundIDIsStableAndMatchesTheArchive. The renderer keys its per-round
+// state on this id, so it has to be the same string for every push of a round and
+// a different one for the next; and it is the archive's primary key, so the two
+// must agree or a round on screen cannot be matched to its record.
+func TestMazeRoundIDIsStableAndMatchesTheArchive(t *testing.T) {
+	r, st, _, ov, mr := startTestMaze(t)
+	seat(t, r, mr, "bob")
+
+	first := lastMazeBoard(t, ov).RoundID
+	if first == "" {
+		t.Fatal("the payload carries no round id; the renderer would fall back to guessing")
+	}
+	for i := 0; i < 3; i++ {
+		r.Handle(emsg("bob", "!up", false))
+		cycle(r, mr)
+		if got := lastMazeBoard(t, ov).RoundID; got != first {
+			t.Fatalf("round id changed mid-round: %q then %q", first, got)
+		}
+	}
+
+	for mr.round.Phase != maze.PhaseDone {
+		cycle(r, mr)
+	}
+	rounds, err := mazeLog(t, st).MazeRoundLog(10)
+	if err != nil || len(rounds) != 1 {
+		t.Fatalf("archive: %d rounds err=%v", len(rounds), err)
+	}
+	if rounds[0].ID != first {
+		t.Errorf("archived as %q but shown as %q — a watched round cannot be matched to its record",
+			rounds[0].ID, first)
+	}
+}
+
+// TestMazeRoundIDsDifferBetweenRounds is the property the trap-fade state depends
+// on: without it the renderer carries one round's spent traps into the next, where
+// they would never be drawn — on cells that may genuinely be trapped this time.
+func TestMazeRoundIDsDifferBetweenRounds(t *testing.T) {
+	r, _, _, ov, mr := startTestMaze(t)
+	seat(t, r, mr, "bob")
+	first := lastMazeBoard(t, ov).RoundID
+	for mr.round.Phase != maze.PhaseDone {
+		cycle(r, mr)
+	}
+	r.clearMaze(mr)
+
+	r.Handle(emsg("alice", "!maze", false))
+	if r.maze == nil {
+		t.Fatal("second round did not start")
+	}
+	t.Cleanup(r.maze.halt)
+	r.maze.halt()
+
+	if second := lastMazeBoard(t, ov).RoundID; second == first {
+		t.Errorf("both rounds are %q — the renderer cannot tell them apart", second)
+	}
+}

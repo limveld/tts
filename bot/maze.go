@@ -58,6 +58,19 @@ var mazeSeats = []struct {
 	{"#b96fe0", "🟣"},
 }
 
+// id names this round, for the archive and for the overlay.
+//
+// Rounds cannot overlap — there is one board stage — so the start instant is
+// already unique; the seed rides along because it can be pinned for a rematch,
+// and a colliding id would silently drop the second round from the log.
+//
+// The same string goes to both, which is what lets a round being watched be
+// matched up with its archived record afterwards, and what lets the renderer tell
+// one round from the next without having to guess from the cycle counter.
+func (mr *mazeRound) id() string {
+	return fmt.Sprintf("%d-%x", mr.round.State().StartedAt, mr.round.Map.Seed)
+}
+
 // mazeSeat is seat n's colour, wrapping round if there are ever more seats than
 // colours.
 func mazeSeat(n int) (hex, emoji string) {
@@ -428,10 +441,7 @@ func (mr *mazeRound) archive(reason string) (store.MazeRound, []store.MazeEvent)
 		reason = st.Reason
 	}
 	rec := store.MazeRound{
-		// Rounds cannot overlap — there is one board stage — so the start instant
-		// is already unique; the seed rides along because it can be pinned for a
-		// rematch, and a colliding id would silently drop the second round.
-		ID:        fmt.Sprintf("%d-%x", st.StartedAt, mr.round.Map.Seed),
+		ID:        mr.id(),
 		RoomID:    mr.roomID,
 		Seed:      mr.round.Map.Seed,
 		StartedAt: st.StartedAt / 1000,
@@ -1012,6 +1022,13 @@ type mazePlayer struct {
 
 // mazeBoard is the render payload.
 type mazeBoard struct {
+	// RoundID identifies the round this board belongs to. The renderer keeps a
+	// little per-round state — which sprung traps it has already faded out — and
+	// used to spot a new round by watching the cycle counter go backwards. That is
+	// inference, and it fails in the cases that matter: a bot killed mid-round
+	// never sends the hidden push that would have cleared it, and two rounds are
+	// both briefly at cycle zero. Saying which round it is removes the guess.
+	RoundID   string       `json:"roundId"`
 	Display   string       `json:"display"`
 	Phase     string       `json:"phase"`
 	Cycle     int          `json:"cycle"`
@@ -1043,6 +1060,7 @@ type mazeTrap struct {
 func (r *Router) mazePayload(mr *mazeRound) mazeBoard {
 	rd := mr.round
 	b := mazeBoard{
+		RoundID:   mr.id(),
 		Display:   mr.cfg.Display,
 		Phase:     rd.Phase.String(),
 		Cycle:     rd.Cycle,

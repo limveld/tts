@@ -454,8 +454,13 @@ function renderMaze(d) {
   mazeEl.className = panel ? 'm-panel' : 'm-full';
 
   const prev = mazePrev;
-  // A new round reuses cells, so the fade clock has to start again with it.
-  if (!prev || d.cycle < prev.cycle) mazeTrapSeen = {};
+  // A new round reuses cells, so the fade clock starts again with it. Keyed on the
+  // round's own id rather than inferred from the cycle counter going backwards:
+  // that inference missed a round whose bot was killed before it could send the
+  // hidden push, leaving the previous round's spent traps tracked into the next
+  // one — where they would never draw at all, on cells that might really be
+  // trapped this time.
+  if (!prev || d.roundId !== prev.roundId) mazeTrapSeen = {};
   const g = mazeBlocks(d, prev);
   const n = d.size;
 
