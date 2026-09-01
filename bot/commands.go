@@ -270,8 +270,15 @@ func (r *Router) listCommands(m ChatMessage) {
 		return
 	}
 	// Public built-ins, gated on the same flags used to dispatch them.
+	//
+	// Curated rather than exhaustive: one entry per way in, not every alias. The
+	// maze answers to twelve movement spellings and lists four, because the rest
+	// exist to dodge Twitch's duplicate-message rule rather than to be discovered
+	// here — and the round's own opening line explains them at the moment they
+	// become useful.
 	cmds := []string{r.cmds.TTSPrefix, r.cmds.SFX, "!voices", "!wordle", "!guess", "!wordlewins",
-		"!connections", "!group", "!connectionswins"}
+		"!connections", "!group", "!connectionswins",
+		"!maze", "!up", "!down", "!left", "!right", "!mazewins"}
 	if r.economy {
 		cmds = append(cmds, "!marks", "!leaderboard", "!g", "!give")
 	}

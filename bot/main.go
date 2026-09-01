@@ -220,6 +220,7 @@ func seedCommands(db CommandStore, logger *log.Logger) {
 	}
 	for _, c := range []store.Command{
 		{Name: "ttshelp", Response: "Type !tts <message> and I'll read it. Pick a voice with a code like !ttsk — see !voices."},
+		{Name: "mazehelp", Response: "Torch Maze: !maze starts a round, first 5 to move get a seat. Move one square a turn with !up !down !left !right. Grab a key (there's one fewer than players) and reach the door. If a repeat move seems to vanish, say it another way: !go up or !gou. !mazewins for the leaderboard."},
 		{Name: "socials", Response: "Socials: (set me with !editcom !socials <links>)"},
 		{Name: "schedule", Response: "Schedule: (set me with !editcom !schedule <text>)"},
 	} {

@@ -1676,3 +1676,27 @@ func TestMazeAliasesAreReserved(t *testing.T) {
 		}
 	}
 }
+
+// TestMazeAppearsInTheCommandList: a game nobody can find is a game nobody plays.
+// The maze shipped without an entry here while Wordle and Connections had one, so
+// the only way to discover it was to already know.
+func TestMazeAppearsInTheCommandList(t *testing.T) {
+	r, _, _, chat := econRouter(t)
+	r.Handle(emsg("bob", "!commands", false))
+	if len(chat.replies) != 1 {
+		t.Fatalf("replies=%v", chat.replies)
+	}
+	got := chat.replies[0].text
+	for _, want := range []string{"!maze", "!up", "!down", "!left", "!right", "!mazewins"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("!commands does not mention %s: %q", want, got)
+		}
+	}
+	// The alias spellings exist to dodge Twitch's duplicate rule, not to be browsed;
+	// listing all twelve would bury the four that matter.
+	for _, noise := range []string{"!gou", "!god", "!gol", "!gor"} {
+		if strings.Contains(got, noise) {
+			t.Errorf("!commands lists the alias %s; the list should stay one entry per way in", noise)
+		}
+	}
+}
