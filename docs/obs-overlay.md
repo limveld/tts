@@ -1,9 +1,11 @@
-# Playing TTS in OBS / Streamlabs (no BlackHole)
+# The OBS overlay (audio + the on-screen games)
 
-The server can play each TTS clip through an **OBS/Streamlabs Browser Source** instead of
-your machine's speakers. OBS renders the browser source's audio natively into the stream mix,
-so you need **no virtual audio device (BlackHole) and no desktop-audio capture** — and it
-works whether the server runs on the streaming machine or a different one.
+One Browser Source does two jobs. It plays each TTS clip through **OBS/Streamlabs** instead
+of your machine's speakers — OBS renders the source's audio natively into the stream mix, so
+you need **no virtual audio device (BlackHole) and no desktop-audio capture**, and it works
+whether the server runs on the streaming machine or a different one. It is also where every
+on-screen game draws: the gamble panel, the depth widget, Wordle, Connections, the Torch
+Maze, and the shoutout/ad toasts.
 
 This is the default (`-player browser`). Use `-player vlc` to play on local speakers instead
 (handy for testing without OBS).
@@ -13,10 +15,18 @@ This is the default (`-player browser`). Use `-player vlc` to play on local spea
 1. Run the server: `mise run server:serve` (browser mode is the default). The log prints the
    exact URL to use.
 2. In OBS/Streamlabs: **Sources → + → Browser**.
-   - **URL:** `http://127.0.0.1:8080/overlay`
-   - **Width/Height:** small (e.g. 50×50) — it's audio-only; the page is transparent.
+   - **URL:** `http://127.0.0.1:8080/overlay` — append `?token=YOUR_SECRET` if the server
+     runs with `-token` (or `TTS_TOKEN` set). A Browser Source cannot send auth headers.
+   - **Width/Height: 1920×1080.** The page lays itself out on a fixed 1920×1080 stage and is
+     transparent everywhere it is not drawing, so scale and position the *source* in OBS
+     rather than shrinking the browser. This used to say 50×50, from when the overlay really
+     was audio-only; at that size every game renders into a viewport far smaller than the
+     board and none of them are visible.
    - Tick **"Control audio via OBS"** so you can set its volume and monitor it back to your
      own speakers (Audio Mixer → gear → Advanced Audio Properties → Monitor).
+   - Leave **"Shutdown source when not visible"** off. The server replays the last state to a
+     reconnecting page, so a round survives a scene switch — but only if the source is still
+     running to receive it.
 3. Fire a `!tts` (or `curl -XPOST http://127.0.0.1:8080/say -d 'text=hello'`). The audio comes
    through OBS. `!skip` cuts the current clip.
 
@@ -37,7 +47,11 @@ elsewhere (a headless box, a Pi, a spare PC):
 
 ## How it works
 
-Server → page over **Server-Sent Events** (`play`/`stop`); the page plays the clip via an
-`<audio>` element and POSTs `/overlay/done` when it finishes, which lets the queue stay
-serialized. All standard-library, no extra dependencies. Endpoints: `GET /overlay`,
-`GET /overlay/events`, `GET /overlay/clip/{id}.wav`, `POST /overlay/done`.
+Server → page over **Server-Sent Events**. Audio events (`play`/`stop`) are transient: the
+page plays the clip via an `<audio>` element and POSTs `/overlay/done` when it finishes, which
+lets the queue stay serialized. Game state (`gamble`/`depth`/`wordle`/`connections`/`maze`) is
+pushed by the bot to `POST /overlay/state`, broadcast, **and cached** — a newly connected page
+is handed the current state immediately, so reloading the source or switching scenes
+mid-round redraws the board rather than showing nothing until the next update. All
+standard-library, no extra dependencies. Endpoints: `GET /overlay`, `GET /overlay/events`,
+`POST /overlay/state`, `GET /overlay/clip/{id}.wav`, `POST /overlay/done`.
