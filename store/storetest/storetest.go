@@ -49,6 +49,8 @@ type Store interface {
 	WordleLeaderboard(n int) ([]store.WordleWin, error)
 	ConnectionsAddWin(userID, login, display string) (wins int, err error)
 	ConnectionsLeaderboard(n int) ([]store.ConnectionsWin, error)
+	MazeAddWin(userID, login, display string) (wins int, err error)
+	MazeLeaderboard(n int) ([]store.MazeWin, error)
 
 	// Chat log
 	LogMessages(msgs []store.ChatMessage) error
@@ -84,6 +86,8 @@ func Run(t *testing.T, newStore New) {
 		{"Settings", testSettings},
 		{"WordleTally", testWordleTally},
 		{"ConnectionsTally", testConnectionsTally},
+		{"MazeTally", testMazeTally},
+		{"TalliesAreIndependent", testTalliesAreIndependent},
 		{"RoundSaveLoadClear", testRoundSaveLoadClear},
 		{"RoundOverwrite", testRoundOverwrite},
 		{"ChatLogRoundTrip", testChatLogRoundTrip},

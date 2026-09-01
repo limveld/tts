@@ -13,7 +13,7 @@ import (
 // wantSchemaVersion is the highest migration in migrations/. It must stay in step
 // with store/sqlite's — the two dialects are meant to describe the same schema,
 // and the migrate tool prints both.
-const wantSchemaVersion = 6
+const wantSchemaVersion = 7
 
 func schemaVersion(t *testing.T, s *Store) int64 {
 	t.Helper()
@@ -51,7 +51,7 @@ func TestMigrateFreshSchema(t *testing.T) {
 	// Every table the two migrations create is present and usable.
 	for _, table := range []string{
 		"commands", "users", "ledger", "settings",
-		"wordle_wins", "connections_wins", "accounts", "game_rounds",
+		"wordle_wins", "connections_wins", "maze_wins", "accounts", "game_rounds",
 		"ledger_refs", "ledger_opening", "ledger_folded",
 	} {
 		var n int
@@ -476,6 +476,13 @@ func TestChatPartitionBoundsAreUTC(t *testing.T) {
 // with it. Worth exercising: the children are partitions rather than data of
 // their own, and a DROP that left them behind would orphan every one of them
 // into pg_dump.
+//
+// It rolls back to 5 rather than stepping down once. Down() undoes whichever
+// migration happens to be newest, so a single step only reached the chat log for
+// as long as the chat log was the last migration — which stopped being true the
+// moment 00007 was added, and the failure read as "the chat log is not
+// reversible" rather than "this test is aimed at the wrong migration". Naming the
+// target keeps it pointed at 00006 however many migrations land on top.
 func TestChatLogMigrationIsReversible(t *testing.T) {
 	s, err := Open(storetest.TempSchemaDSN(t, storetest.PostgresDSN(t)))
 	if err != nil {
@@ -493,8 +500,8 @@ func TestChatLogMigrationIsReversible(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.Down(context.Background()); err != nil {
-		t.Fatalf("down: %v", err)
+	if _, err := p.DownTo(context.Background(), 5); err != nil {
+		t.Fatalf("down to 5: %v", err)
 	}
 
 	for _, name := range []string{"chat_message", "chat_stats", "chat_folded"} {

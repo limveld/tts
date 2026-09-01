@@ -56,6 +56,7 @@ var tables = []struct {
 	{"settings", []string{"key", "value"}},
 	{"wordle_wins", []string{"user_id", "login", "display", "wins"}},
 	{"connections_wins", []string{"user_id", "login", "display", "wins"}},
+	{"maze_wins", []string{"user_id", "login", "display", "wins"}},
 	{"game_rounds", []string{"game", "room_id", "ends_at", "state", "updated_at"}},
 	{"ledger_folded", []string{"name", "from_ts", "through_ts", "rows", "delta", "folded_at"}},
 	// The chat log. chat_message is the second table whose Postgres side is
@@ -70,9 +71,11 @@ var tables = []struct {
 	{"chat_folded", []string{"name", "from_ts", "through_ts", "rows", "folded_at"}},
 }
 
-// games must match bot/rounds.go's constants. A round left behind at cutover is
+// games is every game that can have an in-flight round. It comes from store so
+// that it cannot drift from what the bot actually writes — which it did, silently,
+// the first time a fourth game was added. A round left behind at cutover is
 // escrowed marks left behind with it.
-var games = []string{"gamble", "wordle", "connections"}
+var games = store.Games
 
 // batchRows is how many rows go into one multi-VALUES insert. 17k rows is
 // instant either way; this just keeps the parameter count under Postgres's

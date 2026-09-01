@@ -39,6 +39,13 @@ type ConnectionsWin struct {
 	Wins    int
 }
 
+// MazeWin is one leaderboard row.
+type MazeWin struct {
+	Login   string
+	Display string
+	Wins    int
+}
+
 // ChatMessage is one persisted line of chat.
 //
 // It is deliberately not the bot's ChatMessage. That one carries IRC parsing
