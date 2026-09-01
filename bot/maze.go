@@ -165,9 +165,13 @@ func (r *Router) startMaze(m ChatMessage) {
 	r.pushMaze(payload)
 	go r.runMaze(mr)
 
+	// Seconds, spelled out here rather than through shortDuration: that rounds to
+	// the nearest minute for uptime and follow-age, so every join window this game
+	// will ever have came out as "0m".
+	joinWindow := time.Duration(cfg.Round.JoinCycles) * cfg.Tick
 	r.chat.Send(m.RoomID, fmt.Sprintf(
-		"🧭 Torch Maze! Type !go <path> to take a seat — %s to join, %d seats. Moves are w/a/s/d (up to %d at once, e.g. !go wwd).",
-		shortDuration(time.Duration(cfg.Round.JoinCycles)*cfg.Tick), cfg.Round.MaxSeats, cfg.Round.QueueMax))
+		"🧭 Torch Maze! Type !go <path> to take a seat — %.0fs to join, %d seats. Moves are w/a/s/d (up to %d at once, e.g. !go wwd).",
+		joinWindow.Seconds(), cfg.Round.MaxSeats, cfg.Round.QueueMax))
 }
 
 // goMaze handles !go: it seats a chatter during the join window and queues their
@@ -245,7 +249,7 @@ func (r *Router) tickMaze(mr *mazeRound, now time.Time) bool {
 	}
 	evs := mr.round.Tick(now)
 	done := mr.round.Phase == maze.PhaseDone
-	lines, toasts := mr.announce(evs)
+	lines, endLine, toasts := mr.announce(evs)
 	r.persistMaze(mr)
 	payload := r.mazePayload(mr)
 	finished := mr.finishers(evs)
@@ -257,12 +261,17 @@ func (r *Router) tickMaze(mr *mazeRound, now time.Time) bool {
 			r.overlay.Push("notify", t)
 		}
 	}
+	// Order matters: what happened this cycle, then who got out, then the closing
+	// summary that names them.
 	if r.chat != nil {
 		for _, line := range lines {
 			r.chat.Send(mr.roomID, line)
 		}
 	}
 	r.awardMazeFinishers(mr, finished)
+	if endLine != "" && r.chat != nil {
+		r.chat.Send(mr.roomID, endLine)
+	}
 	if done {
 		r.scheduleMazeClear(mr)
 		return false
@@ -396,7 +405,7 @@ func (r *Router) showMazeWins(m ChatMessage) {
 // Five players on an 8s cycle can easily produce four events at once, and a bot
 // that says four things every eight seconds for three minutes buries every human
 // conversation in a chat with under ten people in it.
-func (mr *mazeRound) announce(evs []maze.Event) (lines []string, toasts []notifyData) {
+func (mr *mazeRound) announce(evs []maze.Event) (lines []string, end string, toasts []notifyData) {
 	// A spiked key-holder emits KeyDropped and Spiked in the same cycle. They are
 	// one event to a reader, so the drop is folded into the spike sentence rather
 	// than said twice.
@@ -425,9 +434,10 @@ func (mr *mazeRound) announce(evs []maze.Event) (lines []string, toasts []notify
 				})
 			}
 		case maze.EventRoundEnded:
-			if l := mr.endLine(e.Reason); l != "" {
-				bookends = append(bookends, l)
-			}
+			// Handed back separately, not appended: the closing summary names the
+			// placements, so it has to be said after the finishes that produced
+			// them rather than before.
+			end = mr.endLine(e.Reason)
 		case maze.EventSpiked:
 			if p := mr.player(e.Seat); p != nil {
 				line := "💀 @" + p.Display + " hit spikes at " + e.At.String() + " — back to the start"
@@ -471,7 +481,7 @@ func (mr *mazeRound) announce(evs []maze.Event) (lines []string, toasts []notify
 	if len(texture) > 0 {
 		lines = append(lines, strings.Join(texture, " · "))
 	}
-	return append(lines, bookends...), toasts
+	return append(lines, bookends...), end, toasts
 }
 
 // player is the seat's player, or nil for a round-level event.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"math/rand"
 	"strings"
 	"testing"
@@ -557,7 +558,7 @@ func ev(kind maze.EventKind, seat, n int, at maze.Cell) maze.Event {
 func TestMazeChatCoalescesACycle(t *testing.T) {
 	_, _, mr := seatedRound(t)
 
-	lines, _ := mr.announce([]maze.Event{
+	lines, _, _ := mr.announce([]maze.Event{
 		ev(maze.EventKeyTaken, 0, 1, maze.Cell{X: 1, Y: 1}),
 		ev(maze.EventTrapped, 1, 2, maze.Cell{X: 2, Y: 2}),
 		ev(maze.EventSpiked, 2, 0, maze.Cell{X: 3, Y: 3}),
@@ -580,7 +581,7 @@ func TestMazeBonksStayOutOfChat(t *testing.T) {
 	_, _, mr := seatedRound(t)
 
 	before := len(mr.feed) // seats locking has already logged an entry
-	lines, toasts := mr.announce([]maze.Event{
+	lines, _, toasts := mr.announce([]maze.Event{
 		ev(maze.EventBonked, 0, 0, maze.Cell{X: 1, Y: 1}),
 		ev(maze.EventBonked, 1, 0, maze.Cell{X: 2, Y: 2}),
 	})
@@ -602,7 +603,7 @@ func TestMazeSpikeAndKeyDropReadAsOneEvent(t *testing.T) {
 	_, _, mr := seatedRound(t)
 	at := maze.Cell{X: 2, Y: 3}
 
-	lines, toasts := mr.announce([]maze.Event{
+	lines, _, toasts := mr.announce([]maze.Event{
 		ev(maze.EventKeyDropped, 0, 0, at),
 		ev(maze.EventSpiked, 0, 0, at),
 	})
@@ -629,17 +630,17 @@ func TestMazeBounceIsAnnouncedOnce(t *testing.T) {
 	_, _, mr := seatedRound(t)
 	bounce := []maze.Event{ev(maze.EventBounced, 0, 0, maze.Cell{X: 4, Y: 4})}
 
-	first, _ := mr.announce(bounce)
+	first, _, _ := mr.announce(bounce)
 	if len(first) != 1 || !strings.Contains(first[0], "no key") {
 		t.Fatalf("first bounce=%q, want it announced", first)
 	}
 	for i := 0; i < 3; i++ {
-		if again, _ := mr.announce(bounce); len(again) != 0 {
+		if again, _, _ := mr.announce(bounce); len(again) != 0 {
 			t.Fatalf("bounce %d repeated in chat: %q", i+2, again)
 		}
 	}
 	// A different player still gets their moment.
-	if other, _ := mr.announce([]maze.Event{ev(maze.EventBounced, 1, 0, maze.Cell{X: 4, Y: 4})}); len(other) != 1 {
+	if other, _, _ := mr.announce([]maze.Event{ev(maze.EventBounced, 1, 0, maze.Cell{X: 4, Y: 4})}); len(other) != 1 {
 		t.Errorf("a second player's bounce was suppressed: %q", other)
 	}
 }
@@ -649,11 +650,11 @@ func TestMazeBounceIsAnnouncedOnce(t *testing.T) {
 func TestMazeLastKeyIsCalledOut(t *testing.T) {
 	_, _, mr := seatedRound(t)
 
-	some, _ := mr.announce([]maze.Event{ev(maze.EventKeyTaken, 0, 2, maze.Cell{X: 1, Y: 1})})
+	some, _, _ := mr.announce([]maze.Event{ev(maze.EventKeyTaken, 0, 2, maze.Cell{X: 1, Y: 1})})
 	if len(some) != 1 || !strings.Contains(some[0], "2 keys left") {
 		t.Errorf("line=%q, want the remaining count", some)
 	}
-	last, _ := mr.announce([]maze.Event{ev(maze.EventKeyTaken, 1, 0, maze.Cell{X: 1, Y: 2})})
+	last, _, _ := mr.announce([]maze.Event{ev(maze.EventKeyTaken, 1, 0, maze.Cell{X: 1, Y: 2})})
 	if len(last) != 1 || !strings.Contains(last[0], "LAST") {
 		t.Errorf("line=%q, want the last key called out", last)
 	}
@@ -666,7 +667,7 @@ func TestMazeLastKeyIsCalledOut(t *testing.T) {
 func TestMazeToastsAreRareByConstruction(t *testing.T) {
 	_, _, mr := seatedRound(t)
 
-	_, quiet := mr.announce([]maze.Event{
+	_, _, quiet := mr.announce([]maze.Event{
 		ev(maze.EventKeyTaken, 0, 1, maze.Cell{X: 1, Y: 1}),
 		ev(maze.EventTrapped, 1, 2, maze.Cell{X: 2, Y: 2}),
 		ev(maze.EventFreed, 1, 0, maze.Cell{X: 2, Y: 2}),
@@ -677,7 +678,7 @@ func TestMazeToastsAreRareByConstruction(t *testing.T) {
 		t.Errorf("routine events raised %d toasts: %+v", len(quiet), quiet)
 	}
 
-	_, loud := mr.announce([]maze.Event{
+	_, _, loud := mr.announce([]maze.Event{
 		ev(maze.EventSpiked, 0, 0, maze.Cell{X: 1, Y: 1}),
 		ev(maze.EventFinished, 1, 1, maze.Cell{X: 5, Y: 5}),
 	})
@@ -960,5 +961,50 @@ func TestMazeWinsEmptyLeaderboard(t *testing.T) {
 	r.Handle(emsg("bob", "!mazewins", false))
 	if len(chat.replies) != 1 || !strings.Contains(chat.replies[0].text, "!maze") {
 		t.Errorf("replies=%v want an empty-leaderboard nudge pointing at !maze", chat.replies)
+	}
+}
+
+// TestMazeOpenBannerNamesRealSeconds: shortDuration rounds to the nearest minute
+// — it is built for uptime and follow-age — so every join window this game will
+// ever have rendered as "0m".
+func TestMazeOpenBannerNamesRealSeconds(t *testing.T) {
+	_, _, chat, _, mr := startTestMaze(t)
+	want := time.Duration(mr.round.Cfg.JoinCycles) * mr.cfg.Tick
+
+	if len(chat.sends) == 0 {
+		t.Fatal("no opening announcement")
+	}
+	got := chat.sends[0]
+	if strings.Contains(got, "0m") {
+		t.Errorf("opening line says %q — the join window is %v, not zero", got, want)
+	}
+	if !strings.Contains(got, fmt.Sprintf("%.0fs", want.Seconds())) {
+		t.Errorf("opening line %q should name the %v join window in seconds", got, want)
+	}
+}
+
+// TestMazeClosingSummaryFollowsTheFinishes. On the last cycle the final players
+// get out and the round ends together, and the closing line names the placements
+// — so announcing it before the finishes that produced them reads backwards.
+func TestMazeClosingSummaryFollowsTheFinishes(t *testing.T) {
+	r, _, chat, _, mr := startTestMaze(t)
+	seat(t, r, mr, "bob", "carol", "dave", "erin", "finn")
+	playMazeRound(t, r, mr)
+
+	lastFinish, roundOver := -1, -1
+	for i, line := range chat.sends {
+		if strings.Contains(line, "escapes in") || strings.Contains(line, "is OUT of the maze") {
+			lastFinish = i
+		}
+		if strings.Contains(line, "Round over") {
+			roundOver = i
+		}
+	}
+	if lastFinish < 0 || roundOver < 0 {
+		t.Fatalf("expected both a finish and a closing line; got %q", chat.sends)
+	}
+	if roundOver < lastFinish {
+		t.Errorf("the closing summary (line %d) is announced before the last finish (line %d):\n%s",
+			roundOver, lastFinish, strings.Join(chat.sends, "\n"))
 	}
 }
