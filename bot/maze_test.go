@@ -1468,3 +1468,67 @@ func TestMazeLogSurvivesARestart(t *testing.T) {
 		t.Errorf("%d moves survived the restart, want %d", got, wantMoves)
 	}
 }
+
+// TestMazeRosterNamesEachPlayersColour: the board is five small squares, and this
+// line is the only seat confirmation chat gets — joins are coalesced rather than
+// answered one by one — so it is where a player finds out which square is theirs.
+func TestMazeRosterNamesEachPlayersColour(t *testing.T) {
+	r, _, chat, _, mr := startTestMaze(t)
+	seat(t, r, mr, "bob", "carol", "dave")
+
+	roster := chat.sends[len(chat.sends)-1]
+	if !strings.Contains(roster, "Seats locked") {
+		t.Fatalf("last line is not the roster: %q", roster)
+	}
+	for _, p := range mr.round.Players {
+		_, emoji := mazeSeat(p.Seat)
+		if !strings.Contains(roster, emoji+" @"+p.Display) {
+			t.Errorf("roster %q does not give %s their colour %s", roster, p.Display, emoji)
+		}
+	}
+}
+
+// TestMazeSeatColoursAreOnePalette is the point of moving the palette into the
+// bot. The emoji chat is told and the swatch drawn on the board are the same fact,
+// and a player told they are red who then sees no red dot has been lied to by a
+// mismatch nothing else would surface.
+func TestMazeSeatColoursAreOnePalette(t *testing.T) {
+	r, _, _, ov, mr := startTestMaze(t)
+	seat(t, r, mr, "bob", "carol", "dave", "erin", "finn")
+
+	b := lastMazeBoard(t, ov)
+	if len(b.Players) != len(mr.round.Players) {
+		t.Fatalf("%d players in the payload, want %d", len(b.Players), len(mr.round.Players))
+	}
+	seen := map[string]int{}
+	for _, p := range b.Players {
+		hex, _ := mazeSeat(p.Seat)
+		if p.Color != hex {
+			t.Errorf("seat %d renders %s but the roster calls it %s", p.Seat, p.Color, hex)
+		}
+		if p.Color == "" {
+			t.Errorf("seat %d has no colour; the renderer would fall back and the roster would be wrong", p.Seat)
+		}
+		seen[p.Color]++
+	}
+	// Every seat a distinct colour, or two players are the same square.
+	for hex, n := range seen {
+		if n > 1 {
+			t.Errorf("%d players share colour %s", n, hex)
+		}
+	}
+}
+
+// TestMazeSeatWrapsPastThePalette: max_seats is configurable and the palette is
+// five long, so seat 5 has to come back round rather than panic.
+func TestMazeSeatWrapsPastThePalette(t *testing.T) {
+	for _, n := range []int{0, 4, 5, 11} {
+		hex, emoji := mazeSeat(n)
+		if hex == "" || emoji == "" {
+			t.Errorf("seat %d has no colour: %q/%q", n, hex, emoji)
+		}
+	}
+	if h0, e0 := mazeSeat(0); func() bool { h, e := mazeSeat(len(mazeSeats)); return h != h0 || e != e0 }() {
+		t.Error("seat wrapping does not return to the first colour")
+	}
+}

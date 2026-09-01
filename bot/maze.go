@@ -38,6 +38,33 @@ type MazeLog interface {
 	MazeLogRound(r store.MazeRound, evs []store.MazeEvent) error
 }
 
+// mazeSeats is the seat palette: the colour a runner is drawn in, and the emoji
+// chat is told to look for.
+//
+// Both halves live here, together, because they are one fact. The overlay used to
+// own the hex and chat would have owned the emoji, which is two copies of the same
+// palette that can disagree — and when they disagree the roster does not look
+// wrong, it just quietly sends a player hunting for somebody else's dot. The
+// renderer now takes the colour from the payload, so there is nothing to keep in
+// step.
+var mazeSeats = []struct {
+	Hex   string
+	Emoji string
+}{
+	{"#e6482e", "🔴"},
+	{"#4fa4ff", "🔵"},
+	{"#3fbf5f", "🟢"},
+	{"#e8c547", "🟡"},
+	{"#b96fe0", "🟣"},
+}
+
+// mazeSeat is seat n's colour, wrapping round if there are ever more seats than
+// colours.
+func mazeSeat(n int) (hex, emoji string) {
+	s := mazeSeats[((n%len(mazeSeats))+len(mazeSeats))%len(mazeSeats)]
+	return s.Hex, s.Emoji
+}
+
 // mazeResultLinger is how long a settled board stays up before the stage is
 // freed — long enough to read the placements off the overlay.
 const mazeResultLinger = 15 * time.Second
@@ -738,9 +765,14 @@ func mazeOrdinalWord(place int) string {
 }
 
 func (mr *mazeRound) seatsLockedLine(keys int) string {
+	// Each name carries its colour, so a player can find their own dot on a board
+	// where everyone is a small square. This line is the only seat confirmation
+	// chat gets — joins are coalesced rather than answered one by one — so it is
+	// where the colour has to be said.
 	names := make([]string, 0, len(mr.round.Players))
 	for _, p := range mr.round.Players {
-		names = append(names, "@"+p.Display)
+		_, emoji := mazeSeat(p.Seat)
+		names = append(names, emoji+" @"+p.Display)
 	}
 	line := fmt.Sprintf("🧭 Seats locked: %s — %s on the board.",
 		strings.Join(names, " "), plural(keys, "key"))
@@ -973,6 +1005,9 @@ type mazePlayer struct {
 	// which way am I about to go" is a question people have every single cycle.
 	Locked bool   `json:"locked,omitempty"`
 	Move   string `json:"move,omitempty"`
+	// Color is the seat's swatch, sent rather than looked up in the renderer so
+	// that it and the emoji chat was told are one palette. See mazeSeats.
+	Color string `json:"color"`
 }
 
 // mazeBoard is the render payload.
@@ -1042,8 +1077,9 @@ func (r *Router) mazePayload(mr *mazeRound) mazeBoard {
 		}
 	}
 	for _, p := range rd.Players {
+		hex, _ := mazeSeat(p.Seat)
 		row := mazePlayer{
-			Seat: p.Seat, Name: p.Display, At: p.At.String(),
+			Seat: p.Seat, Name: p.Display, At: p.At.String(), Color: hex,
 			HasKey: p.HasKey, StuckFor: p.StuckFor, Place: p.Place,
 		}
 		if d, ok := p.NextDir(); ok {

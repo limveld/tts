@@ -355,7 +355,24 @@ const mazeEl = document.getElementById('maze');
 let mazeTimer = null;
 let mazePrev = null; // previous payload, for change flashes
 
-const MAZE_SEATS = ['#e6482e', '#4fa4ff', '#3fbf5f', '#e8c547', '#b96fe0'];
+// Seat colours come from the payload, not from here. Chat is told which colour a
+// player is when they take a seat, and a second copy of the palette in this file
+// would be free to drift from that one — sending people to look for the wrong dot
+// without anything appearing broken. See mazeSeats in bot/maze.go.
+const MAZE_FALLBACK_SEAT = '#8d97b5';
+
+// How long a sprung trap stays on the board before fading out. Only sprung traps
+// are ever sent — an armed one would give the game away — so an icon here means
+// the hazard is already spent, and leaving it up forever tells people a safe cell
+// is dangerous. Roughly half a cycle at the shipping tick: long enough to be seen
+// through the stream delay, gone before the next move matters.
+const MAZE_TRAP_FADE = 6000;
+
+// When each sprung trap was first seen, so the fade survives a re-render. The
+// board is redrawn on every move as well as every cycle, and a CSS animation on a
+// fresh element restarts from the top — without this the icon would flash back to
+// full opacity each time somebody typed.
+let mazeTrapSeen = {};
 const MAZE_ARROWS = {up: '\u2191', down: '\u2193', left: '\u2190', right: '\u2192'};
 
 function mazeCell(s) {
@@ -430,13 +447,15 @@ function renderMaze(d) {
   if (mazeTimer) { clearInterval(mazeTimer); mazeTimer = null; }
 
   if (!d || d.hidden) {
-    mazeEl.hidden = true; mazeEl.innerHTML = ''; mazePrev = null; return;
+    mazeEl.hidden = true; mazeEl.innerHTML = ''; mazePrev = null; mazeTrapSeen = {}; return;
   }
   mazeEl.hidden = false;
   const panel = d.display === 'panel';
   mazeEl.className = panel ? 'm-panel' : 'm-full';
 
   const prev = mazePrev;
+  // A new round reuses cells, so the fade clock has to start again with it.
+  if (!prev || d.cycle < prev.cycle) mazeTrapSeen = {};
   const g = mazeBlocks(d, prev);
   const n = d.size;
 
@@ -459,9 +478,23 @@ function renderMaze(d) {
   board += mark(d.start, 'm-start', '◦');
   board += mark(d.exit, 'm-exit', '🚪');
   (d.keys || []).forEach(k => { board += mark(k, 'm-key', '🔑'); });
-  // Only sprung traps are ever sent. The tile stays marked so the board keeps a
-  // record of what the first runner through paid for.
-  (d.traps || []).forEach(tr => { board += mark(tr.at, 'm-trap', tr.kind === 'spike' ? '💀' : '🐻'); });
+  // Only sprung traps are ever sent, so each one marks a hazard that has already
+  // been spent by whoever hit it. Show it briefly and let it fade: a permanent
+  // icon reads as "danger here" on a cell that is now the safest on the board.
+  //
+  // The negative animation-delay resumes the fade where it left off rather than
+  // restarting it, which is what makes this survive the re-render on every move.
+  const nowMs = Date.now();
+  (d.traps || []).forEach(tr => {
+    if (mazeTrapSeen[tr.at] === undefined) mazeTrapSeen[tr.at] = nowMs;
+    const age = nowMs - mazeTrapSeen[tr.at];
+    if (age >= MAZE_TRAP_FADE) return; // spent and faded; the cell is just floor now
+    const c = mazeCell(tr.at);
+    if (!c) return;
+    board += '<span class="m-mark m-trap" style="left:calc(var(--m-tile)*' + (2 * c.x + 1.5).toFixed(3) +
+             ');top:calc(var(--m-tile)*' + (2 * c.y + 1.5).toFixed(3) +
+             ');animation-delay:' + (-age) + 'ms">' + (tr.kind === 'spike' ? '💀' : '🐻') + '</span>';
+  });
 
   const players = d.players || [];
   players.forEach(p => {
@@ -471,7 +504,7 @@ function renderMaze(d) {
     // whichever cell they are in and they can follow themselves in a pile-up.
     const sx = (p.seat % 3 + 0.5) / 3, sy = (Math.floor(p.seat / 3) + 0.5) / 2;
     const cls = 'm-dot' + (p.hasKey ? ' m-carrying' : '') + (p.stuckFor ? ' m-stuck' : '');
-    board += '<span class="' + cls + '" style="color:' + MAZE_SEATS[p.seat % MAZE_SEATS.length] +
+    board += '<span class="' + cls + '" style="color:' + (p.color || MAZE_FALLBACK_SEAT) +
              ';left:calc(var(--m-tile)*' + (2 * c.x + 1 + sx).toFixed(3) +
              ');top:calc(var(--m-tile)*' + (2 * c.y + 1 + sy).toFixed(3) + ')"></span>';
   });
@@ -488,8 +521,10 @@ function renderMaze(d) {
   const done = d.phase === 'done';
 
   if (panel) {
-    mazeEl.innerHTML = board +
-      (done ? '' : '<div class="m-bar" id="m-bar"><i id="m-fill"></i></div>');
+    // Timer above the board: it is the only chrome here, and a strip along the top
+    // reads as a header rather than as something dangling off the bottom.
+    mazeEl.innerHTML =
+      (done ? '' : '<div class="m-bar" id="m-bar"><i id="m-fill"></i></div>') + board;
     mazePrev = d;
     startMazeCountdown(d, done);
     return;
@@ -515,7 +550,7 @@ function renderMaze(d) {
     else if (p.stuckFor) token = '🐻×' + p.stuckFor;
     else if (p.hasKey) token = '🔑';
     rows += '<div class="m-row' + (moved ? ' m-changed' : '') + (p.place ? ' m-done' : '') + '">' +
-            '<span class="m-swatch" style="background:' + MAZE_SEATS[p.seat % MAZE_SEATS.length] + '"></span>' +
+            '<span class="m-swatch" style="background:' + (p.color || MAZE_FALLBACK_SEAT) + '"></span>' +
             '<span class="m-name">' + escHtml(p.name || '') + '</span>' +
             '<span class="m-token">' + token + '</span>' +
             // The chosen direction, not just that one is chosen. It is the answer
