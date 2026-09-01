@@ -6,24 +6,33 @@ import (
 	"tts/store"
 )
 
-// All three games (gamble, wordle, connections) persist an in-flight round the
-// same way: marshal a record, write it under the game's name, decode it back at
-// startup, delete it when the round is over. This file is that shared shape, so
-// each game keeps only the parts that are actually about the game.
+// All four games (gamble, wordle, connections, maze) persist an in-flight round
+// the same way: marshal a record, write it under the game's name, decode it back
+// at startup, delete it when the round is over. This file is that shared shape,
+// so each game keeps only the parts that are actually about the game.
 //
 // The store never looks inside the document. RoomID and EndsAt are passed
 // separately only so a round is legible in psql without decoding a blob — each
 // game still reads both out of its own record.
 
+// The game names, sourced from store rather than spelled out here:
+// cmd/store-migrate has to carry every in-flight round across at cutover, and
+// when the two lists were maintained separately they drifted. See store/games.go.
+//
+// The maze stores internal/maze's RoundState, which carries its own board rather
+// than a seed to regenerate one from: a config edit or a redeploy between saving
+// and loading would otherwise rebuild a different board and resume everyone into
+// the wrong walls.
 const (
-	gambleGame      = "gamble"
-	wordleGame      = "wordle"
-	connectionsGame = "connections"
+	gambleGame      = store.GameGamble
+	wordleGame      = store.GameWordle
+	connectionsGame = store.GameConnections
+	mazeGame        = store.GameMaze
 )
 
-// RoundStore is the in-flight-round slice of the store, shared by all three
-// games (an interface so tests can substitute a fake). *sqlite.Store and
-// *postgres.Store satisfy it.
+// RoundStore is the in-flight-round slice of the store, shared by every game (an
+// interface so tests can substitute a fake). *sqlite.Store and *postgres.Store
+// satisfy it.
 type RoundStore interface {
 	SaveRound(game, roomID string, endsAt int64, state []byte) error
 	LoadRound(game string) (store.Round, bool, error)

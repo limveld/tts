@@ -58,7 +58,12 @@ type Router struct {
 	wordleMu sync.Mutex   // guards wordle (mutated by handler + the clear timer)
 	wordle   *wordleState // the active Wordle round, or nil when idle
 
-	// One board game (Wordle or Connections) holds the center stage at a time.
+	mazeMu  sync.Mutex // guards maze (mutated by handler + the cycle ticker)
+	maze    *mazeRound // the active Torch Maze round, or nil when idle
+	mazeCfg mazeConfig // maze tuning; zero means defaultMazeConfig()
+
+	// One board game (Wordle, Connections or the Maze) holds the center stage at
+	// a time.
 	boardMu sync.Mutex // guards board
 	board   boardKind  // which board game is live, or boardNone
 
@@ -296,6 +301,15 @@ func (r *Router) randIntn(n int) int {
 	r.rndMu.Lock()
 	defer r.rndMu.Unlock()
 	return r.rnd.Intn(n)
+}
+
+// randInt63 draws a maze board seed. It goes through the same mutex as every
+// other draw: *rand.Rand is not safe for concurrent use and game timers fire on
+// their own goroutines.
+func (r *Router) randInt63() int64 {
+	r.rndMu.Lock()
+	defer r.rndMu.Unlock()
+	return r.rnd.Int63()
 }
 
 // randShuffle is randIntn's sibling for permutations. swap must not itself draw

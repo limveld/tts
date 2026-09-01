@@ -50,6 +50,7 @@ func main() {
 		logger:         logger,
 		notifyCooldown: NewCooldown(cfg.Cooldown),
 		overlay:        NewOverlayClient(cfg.TTSURL, cfg.TTSToken, logger),
+		mazeCfg:        cfg.Maze,
 	}
 
 	// Informational commands (!uptime/!followage) need only the Twitch client.
@@ -73,6 +74,8 @@ func main() {
 	router.loadWordle()
 	// Load the Connections puzzle bank and restore an in-progress round.
 	router.loadConnections(cfg.ConnectionsFile)
+	// Restore an in-flight maze round and restart its cycle clock.
+	router.loadMaze()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

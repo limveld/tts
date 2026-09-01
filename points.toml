@@ -59,6 +59,14 @@ wordle_duration = "3m"     # how long a round runs before it auto-ends
 # also gets `connections_solve_bonus` and a win on the !connectionswins
 # leaderboard. Four shared mistakes or `connections_duration` elapsing ends the
 # round (remaining groups are revealed). Mods: !skipgame, !reveal, !shuffle.
+# Torch Maze: up to five chatters race a fogged maze for keys that are one short
+# of the field (!maze to open a round, !go w/a/s/d to play). The winner takes
+# `maze_reward`; every later place takes half of the one above it, floored at 1,
+# so finishing at all is worth more than not finishing — which is the whole reason
+# the scramble for second and third after the winner exists. Only the winner is
+# tallied on !mazewins. Round pacing lives in maze.toml, not here.
+maze_reward = 100   # marks to the winner; 2nd gets 50, 3rd 25, 4th 12...
+
 connections_group_reward = 25   # base marks per solved group (scaled ×(level+1))
 connections_solve_bonus  = 100  # extra marks to whoever completes the puzzle
 connections_duration     = "10m" # how long a round runs before it auto-ends

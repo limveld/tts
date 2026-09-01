@@ -1,13 +1,13 @@
 package main
 
-// Board-game arbiter: Wordle and Connections are both center-stage board games
-// that share the same overlay region and the same chat's attention, so only one
-// runs at a time. The Router holds a single boardKind token guarded by boardMu;
+// Board-game arbiter: Wordle, Connections and the Maze are all center-stage
+// games that share the same overlay region and the same chat's attention, so
+// only one runs at a time. The Router holds a single boardKind token guarded by boardMu;
 // each game claims the stage on start and releases it when its finished board is
 // cleared. A mod !skipgame force-ends whichever is live.
 //
 // Lock discipline: claimBoard/releaseBoard fully lock and unlock boardMu and
-// never nest it inside a per-game mutex (wordleMu / connMu), so there is no lock
+// never nest it inside a per-game mutex (wordleMu / connMu / mazeMu), so there is no lock
 // ordering between them.
 
 type boardKind string
@@ -16,6 +16,7 @@ const (
 	boardNone        boardKind = ""
 	boardWordle      boardKind = "wordle"
 	boardConnections boardKind = "connections"
+	boardMaze        boardKind = "maze"
 )
 
 // claimBoard reserves the stage for kind. ok is false when a *different* board
@@ -60,6 +61,8 @@ func (r *Router) skipGame(m ChatMessage) {
 		r.forceEndWordle()
 	case boardConnections:
 		r.forceEndConnections()
+	case boardMaze:
+		r.forceEndMaze()
 	default:
 		r.reply(m, "no game is running.")
 	}
@@ -73,6 +76,8 @@ func boardBusyMsg(live boardKind) string {
 		return "🧩 a Connections round is going — finish it (!group) or a mod can !skipgame."
 	case boardWordle:
 		return "🟩 a Wordle round is going — !guess it, or a mod can !skipgame."
+	case boardMaze:
+		return "🧭 a maze round is going — !go to play, or a mod can !skipgame."
 	default:
 		return "another game is running — a mod can !skipgame."
 	}

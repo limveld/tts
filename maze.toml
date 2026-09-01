@@ -1,0 +1,137 @@
+# Torch Maze: up to five chatters race a fogged 6x6 maze for keys that are one
+# short of the field. Open a round with !maze, play with !go w/a/s/d, see the
+# leaderboard with !mazewins. A mod can !skipgame.
+#
+# EVERY SETTING BELOW IS COMMENTED OUT AND SHOWS ITS BUILT-IN DEFAULT.
+#
+# That is deliberate. Unlike points.toml or sfx.toml, this file does not switch
+# the game on — the maze works without it. Uncomment only what you actually want
+# to change, and the rest keeps tracking the defaults in the code. A file that
+# restated every default would silently pin this install to today's values, and
+# the next time one of them is improved you would not get the improvement.
+#
+# A setting that is present but invalid stops the bot at startup with a message
+# saying which one, rather than letting !maze fail mysteriously mid-stream. So
+# does a misspelled key.
+#
+# Rewards are NOT here: `maze_reward` lives in points.toml with the other games'
+# payouts, because what a win is worth belongs to the economy.
+#
+# After editing: `mise run reload`.
+
+# ---- pacing ------------------------------------------------------------------
+
+# Cycle length. The single most important knob, and the one worth measuring
+# rather than guessing.
+#
+# Players read the board *through your stream*: Twitch adds 3-15s of video
+# latency and chat another 1-2s on top, so the whole see-decide-type-receive loop
+# is 5-10 seconds. At a 5-second cycle every player is permanently acting on a
+# board one or two cycles stale, and no amount of UI fixes that — it is the
+# transport. 8 seconds fits the loop inside a single cycle.
+#
+# Measure your own OBS-to-viewer delay once and set this from it.
+# tick_seconds = 8
+
+# Round length. Both are checked; whichever trips first ends the round.
+# max_cycles is the real limit and max_seconds is a wall-clock guard against
+# pauses and desync. Measured over played-out rounds, a winner emerges around
+# cycle 16 and almost always before 24, so 36 is headroom rather than a target.
+# max_cycles  = 36
+# max_seconds = 320
+
+# The frozen window at the top of a round, in cycles: the board is up, seats are
+# filling, nothing moves. It exists because the key count depends on how many
+# people actually joined, so there has to be one moment where the head count is
+# final. At an 8s cycle, 2 gives people ~16 seconds to notice and type.
+# join_cycles = 2
+
+# How long the round stays live after the first player escapes, so the rest can
+# race for the places behind them.
+#
+# This costs far less than it looks: the round ends the moment no unfinished
+# player holds a key and none are left on the board, so a window longer than the
+# field needs simply never runs out. Measured at five players, a window of 6
+# produced exactly one finisher every single time — the runners-up need about ten
+# cycles — while 12 produces four, in the same number of cycles as 10. Setting
+# this too low does not shorten your rounds. It silently deletes second place.
+# placement_cycles = 12
+
+# How many chatters can be seated. Also decides how many key slots the generator
+# places, so the two cannot drift apart.
+# max_seats = 5
+
+# ---- the board ---------------------------------------------------------------
+
+# Cells per side. 6 or 7; larger makes rounds noticeably longer.
+# map_size = 6
+
+# Extra interior walls knocked out for openness, *beyond* the guarantee that
+# start and exit always have two independent routes between them.
+#
+# This is not "percentage of dead ends removed". That dial was tried and does
+# nothing here: the carve is a recursive backtracker, which leaves only about
+# four dead ends on a 36-cell board, so a percentage of them rounds to zero and
+# you get a perfect maze — one route, five players in single file, no overtaking.
+# loop_walls = 4
+
+# Fix the board. 0 draws a fresh maze every round, which is what a stream wants.
+# Set it to replay one exact maze — for a rematch, or to reproduce something that
+# went wrong.
+# seed = 0
+
+# ---- keys --------------------------------------------------------------------
+
+# Keys are one short of the field, so somebody is locked out and the scramble is
+# real: keys = players - key_deficit.
+#
+# The deficit only applies from deficit_min_players upward. It is a fixed
+# absolute shortfall but a wildly variable proportional one — at five players it
+# locks out 20% of the field, at two it locks out half — and a heads-up round
+# with one key is a single sprint followed by minutes of nothing for the loser.
+# So 5→4, 4→3, 3→2, but 2→2.
+# key_deficit         = 1
+# deficit_min_players = 3
+# keys_min            = 1
+
+# Keys are placed in a band of equal walking distance from the start.
+#
+# Equal distance is the point. With keys at varied distances the near ones go
+# first and whoever headed for a far one loses to geometry rather than to racing;
+# an equidistant band means everyone arrives within a cycle or two and the
+# shortfall resolves as an actual scramble.
+# key_band_min = 4
+# key_band_max = 6
+
+# ---- traps -------------------------------------------------------------------
+
+# Both kinds are hidden until sprung, fire once, and then despawn — so the first
+# player through clears the way for everyone behind them.
+#
+# Spikes fling you back to the start and drop any key you were carrying, which
+# makes spike density the rate at which a locked-out player gets back into
+# contention: it is the only way a key ever returns to the board. They are also
+# an order of magnitude harsher than a bear trap, and self-scaling — being flung
+# home early costs almost nothing, late it is most of your round.
+# spikes    = 2
+# bear_traps = 1
+
+# Cycles a bear trap holds you. Your key stays with you while you are stuck.
+# At 8 seconds a cycle, 3 is nearly half a minute of sitting still.
+# bear_trap_cycles = 2
+
+# ---- input and display -------------------------------------------------------
+
+# Moves accepted per !go, consumed one per cycle. Queueing lets people type once
+# and walk several cells instead of every eight seconds, and it sidesteps
+# Twitch's rule that drops a message identical to your previous one — walking a
+# straight corridor would otherwise silently stop working.
+#
+# The cap matters: uncapped, someone types the whole remaining solution in one
+# message the moment the fog lifts.
+# queue_max = 3
+
+# How the overlay draws the board. "full" claims the stage for a dedicated maze
+# scene; "panel" tucks it into the same corner the other games use, which is
+# tidier but hard to read on a phone at 6x6 with five runners on the board.
+# display = "full"

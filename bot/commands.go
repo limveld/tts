@@ -64,6 +64,15 @@ func (r *Router) handleCommands(cmd, rest string, m ChatMessage) bool {
 	case "!connectionswins":
 		r.showConnectionsWins(m)
 		return true
+	case "!maze":
+		r.startMaze(m)
+		return true
+	case "!go":
+		r.goMaze(rest, m)
+		return true
+	case "!mazewins":
+		r.showMazeWins(m)
+		return true
 	case "!skipgame":
 		r.skipGame(m)
 		return true
@@ -288,7 +297,8 @@ func (r *Router) isBuiltin(cmd string) bool {
 	case r.cmds.SFX, r.cmds.Skip, r.cmds.Pause, r.cmds.Resume, r.cmds.Clear,
 		"!addcom", "!editcom", "!delcom", "!commands", "!voices", "!don", "!r", "!so",
 		"!wordle", "!guess", "!wordlewins",
-		"!connections", "!conn", "!group", "!connectionswins", "!skipgame", "!reveal", "!shuffle":
+		"!connections", "!conn", "!group", "!connectionswins", "!skipgame", "!reveal", "!shuffle",
+		"!maze", "!go", "!mazewins":
 		return true
 	}
 	if r.info != nil && (cmd == "!uptime" || cmd == "!followage") {

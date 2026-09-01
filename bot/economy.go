@@ -38,6 +38,10 @@ type EconomyConfig struct {
 	ConnectionsGroupReward int64
 	ConnectionsSolveBonus  int64
 	ConnectionsDuration    time.Duration // how long a Connections round runs before it auto-ends
+	// Torch Maze pays on a halving curve from the winner down, so finishing at
+	// all beats not finishing — which is what gives the placement scramble after
+	// the win a reason to exist. Round length lives in maze.toml, not here.
+	MazeReward int64
 }
 
 // LoadEconomyConfig parses points.toml. A missing file is not an error — it just
@@ -65,6 +69,7 @@ func LoadEconomyConfig(path string) (cfg EconomyConfig, enabled bool, err error)
 		ConnGroupReward int64  `toml:"connections_group_reward"`
 		ConnSolveBonus  int64  `toml:"connections_solve_bonus"`
 		ConnDuration    string `toml:"connections_duration"`
+		MazeReward      int64  `toml:"maze_reward"`
 	}
 	if _, err := toml.DecodeFile(path, &doc); err != nil {
 		return EconomyConfig{}, false, err
@@ -107,6 +112,7 @@ func LoadEconomyConfig(path string) (cfg EconomyConfig, enabled bool, err error)
 		WordleReward:    orInt64(doc.WordleReward, 100),
 		WordleDuration:  wordleDur,
 
+		MazeReward:             orInt64(doc.MazeReward, 100),
 		ConnectionsGroupReward: orInt64(doc.ConnGroupReward, 25),
 		ConnectionsSolveBonus:  orInt64(doc.ConnSolveBonus, 100),
 		ConnectionsDuration:    connDur,
