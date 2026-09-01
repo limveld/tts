@@ -2,11 +2,14 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"tts/store"
+
+	"tts/internal/maze"
 )
 
 // CommandStore is the slice of the store that chat-managed custom commands need
@@ -65,10 +68,23 @@ func (r *Router) handleCommands(cmd, rest string, m ChatMessage) bool {
 		r.showConnectionsWins(m)
 		return true
 	case "!maze":
-		r.startMaze(m)
+		r.startMaze(rest, m)
 		return true
-	case "!go":
-		r.goMaze(rest, m)
+	// One command per direction. These replaced a single "!go <path>": a path let
+	// a player bank several cells from one message, and the message that took
+	// their seat banked one too, which is how a sprite ended up two cells from
+	// where its owner thought it was.
+	case "!up":
+		r.moveMaze(maze.North, m)
+		return true
+	case "!down":
+		r.moveMaze(maze.South, m)
+		return true
+	case "!left":
+		r.moveMaze(maze.West, m)
+		return true
+	case "!right":
+		r.moveMaze(maze.East, m)
 		return true
 	case "!mazewins":
 		r.showMazeWins(m)
@@ -292,13 +308,29 @@ func (r *Router) reply(m ChatMessage, text string) {
 }
 
 // isBuiltin reports whether cmd is a reserved built-in (so !addcom can't shadow it).
+// isBuiltin reports whether cmd is reserved, so !addcom cannot shadow it. SFX
+// names count: a sound is as much a command as anything else once it is loaded.
 func (r *Router) isBuiltin(cmd string) bool {
+	if _, ok := r.sfx[cmd]; ok {
+		return true
+	}
+	return r.isReservedName(cmd)
+}
+
+// isReservedName is isBuiltin without the sound effects — the names the bot
+// itself owns.
+//
+// The split exists because sounds are dispatched *before* the command engine
+// (see Handle), so a sound sharing a name with a built-in silently wins and the
+// built-in becomes unreachable. checkSFXNames uses this to refuse that outright
+// at startup; nothing else should need it.
+func (r *Router) isReservedName(cmd string) bool {
 	switch cmd {
 	case r.cmds.SFX, r.cmds.Skip, r.cmds.Pause, r.cmds.Resume, r.cmds.Clear,
 		"!addcom", "!editcom", "!delcom", "!commands", "!voices", "!don", "!r", "!so",
 		"!wordle", "!guess", "!wordlewins",
 		"!connections", "!conn", "!group", "!connectionswins", "!skipgame", "!reveal", "!shuffle",
-		"!maze", "!go", "!mazewins":
+		"!maze", "!up", "!down", "!left", "!right", "!mazewins":
 		return true
 	}
 	if r.info != nil && (cmd == "!uptime" || cmd == "!followage") {
@@ -310,10 +342,30 @@ func (r *Router) isBuiltin(cmd string) bool {
 			return true
 		}
 	}
-	if _, ok := r.sfx[cmd]; ok {
-		return true
-	}
 	return strings.HasPrefix(cmd, r.cmds.TTSPrefix)
+}
+
+// checkSFXNames refuses to run when a sound shares a name with a command the bot
+// owns.
+//
+// Sounds resolve before the command engine, so such a sound does not conflict —
+// it wins, and the command it shadows simply stops existing. A viewer typing
+// !up during a maze round would hear an airhorn and not move, with nothing
+// logged and nothing to suggest why. That is worth refusing to start over: it is
+// found the moment someone edits sfx.toml and reloads, rather than weeks later.
+func (r *Router) checkSFXNames() error {
+	var clashes []string
+	for name := range r.sfx {
+		if r.isReservedName(name) {
+			clashes = append(clashes, name)
+		}
+	}
+	if len(clashes) == 0 {
+		return nil
+	}
+	sort.Strings(clashes)
+	return fmt.Errorf("sfx.toml defines %s, already a bot command — sounds are dispatched first, so the command would stop working. Rename the sound",
+		strings.Join(clashes, ", "))
 }
 
 // showMarks replies with a user's mark balance: bare !marks/!m for the caller,

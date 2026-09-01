@@ -53,6 +53,12 @@ func main() {
 		mazeCfg:        cfg.Maze,
 	}
 
+	// A sound sharing a name with a built-in silently shadows it, because sounds
+	// dispatch first. Refuse to run rather than let a command quietly stop working.
+	if err := router.checkSFXNames(); err != nil {
+		logger.Fatalf("sfx: %v", err)
+	}
+
 	// Informational commands (!uptime/!followage) need only the Twitch client.
 	if client != nil {
 		router.info = twitchInfo{client: client}
@@ -74,6 +80,9 @@ func main() {
 	router.loadWordle()
 	// Load the Connections puzzle bank and restore an in-progress round.
 	router.loadConnections(cfg.ConnectionsFile)
+	// The maze's chat sender must be up before any round is restored, since a
+	// resumed round starts ticking immediately.
+	router.startMazeChat()
 	// Restore an in-flight maze round and restart its cycle clock.
 	router.loadMaze()
 

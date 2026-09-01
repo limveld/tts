@@ -22,7 +22,7 @@ func liveRound(t *testing.T, seed int64, cycles int) *Round {
 		for _, p := range r.Players {
 			if p.Racing() {
 				if d, ok := greedyStep(m, p.At, greedyTarget(r, p)); ok {
-					r.Submit(p.UserID, []Dir{d}, epoch.Add(time.Duration(rnd.Intn(999))*time.Millisecond))
+					r.Submit(p.UserID, d, epoch.Add(time.Duration(rnd.Intn(999))*time.Millisecond))
 				}
 			}
 		}
@@ -115,22 +115,22 @@ func TestRoundTripThroughJSON(t *testing.T) {
 
 // greedyMoves picks each racer's next step from one round, so every copy under
 // test is driven by identical input and any difference is the engine's.
-func greedyMoves(r *Round) map[string][]Dir {
-	out := map[string][]Dir{}
+func greedyMoves(r *Round) map[string]Dir {
+	out := map[string]Dir{}
 	for _, p := range r.Players {
 		if p.Racing() && p.StuckFor == 0 {
 			if d, ok := greedyStep(r.Map, p.At, greedyTarget(r, p)); ok {
-				out[p.UserID] = []Dir{d}
+				out[p.UserID] = d
 			}
 		}
 	}
 	return out
 }
 
-func applyMoves(r *Round, moves map[string][]Dir, at time.Time) {
+func applyMoves(r *Round, moves map[string]Dir, at time.Time) {
 	for _, p := range r.Players {
-		if path, ok := moves[p.UserID]; ok {
-			r.Submit(p.UserID, path, at)
+		if d, ok := moves[p.UserID]; ok {
+			r.Submit(p.UserID, d, at)
 		}
 	}
 }
@@ -215,8 +215,8 @@ func TestRestorePreservesSubmissionOrder(t *testing.T) {
 	cfg.DeficitMinPlayers = 2 // one key, two players
 	r := start(t, m, cfg, "seated-first", "seated-second")
 
-	r.Submit("seated-first", []Dir{North}, epoch.Add(2*time.Second))
-	r.Submit("seated-second", []Dir{North}, epoch.Add(1*time.Second))
+	r.Submit("seated-first", North, epoch.Add(2*time.Second))
+	r.Submit("seated-second", North, epoch.Add(1*time.Second))
 
 	resumed := roundTrip(t, r)
 	resumed.Tick(epoch)

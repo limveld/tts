@@ -51,16 +51,19 @@ type mazeConfig struct {
 
 // defaultMazeConfig is the shipping ruleset.
 //
-// Tick is 8s rather than the 5s the design first assumed, because players read
-// the board through the stream: Twitch adds 3-15s of video latency and IRC
-// another 1-2s, so at 5s every player is permanently a cycle or two behind a
-// board they cannot act on. At 8s the whole see-decide-type-receive loop fits
-// inside one cycle.
+// Tick is 10s, not the 5s the design first assumed, because players read the
+// board through the stream: Twitch adds 3-15s of video latency and IRC another
+// 1-2s, so at 5s every player is permanently a cycle or two behind a board they
+// cannot act on. Ten seconds puts the whole see-decide-type-receive loop inside a
+// single cycle with room to spare.
+//
+// Display defaults to the corner panel. Covering the stage for several minutes is
+// the channel owner's call, made per round with "!maze full".
 func defaultMazeConfig() mazeConfig {
 	round := maze.DefaultRoundConfig()
 	return mazeConfig{
-		Tick:    8 * time.Second,
-		Display: "full",
+		Tick:    10 * time.Second,
+		Display: "panel",
 		Gen: maze.Config{
 			Size:      6,
 			LoopWalls: 4,
@@ -117,7 +120,14 @@ func (mr *mazeRound) halt() { mr.stopOnce.Do(func() { close(mr.stop) }) }
 // --- commands ---------------------------------------------------------------
 
 // startMaze opens a round (!maze). Anyone can start one, matching !wordle.
-func (r *Router) startMaze(m ChatMessage) {
+// startMaze opens a round (!maze). Anyone can start one, matching !wordle.
+//
+// "!maze full" puts the board on the whole stage instead of the corner panel, and
+// is the channel owner's call alone: it covers whatever else is on screen for
+// several minutes, which is not a decision to hand to chat. Asking for it without
+// being the owner still gets you a round — refusing the whole thing over a
+// modifier would be the harsher reading — just a panel one.
+func (r *Router) startMaze(rest string, m ChatMessage) {
 	if r.chat == nil {
 		r.logger.Printf("!maze: replies not configured — run 'mise run bot:auth'")
 		return
@@ -130,6 +140,18 @@ func (r *Router) startMaze(m ChatMessage) {
 	}
 
 	cfg := r.mazeConfig()
+	deniedFull := false
+	switch strings.ToLower(strings.TrimSpace(rest)) {
+	case "full":
+		if m.IsBroadcaster {
+			cfg.Display = "full"
+		} else {
+			deniedFull = true
+		}
+	case "panel":
+		cfg.Display = "panel"
+	}
+
 	seed := cfg.Seed
 	if seed == 0 {
 		seed = r.randInt63()
@@ -147,7 +169,7 @@ func (r *Router) startMaze(m ChatMessage) {
 	r.mazeMu.Lock()
 	if r.maze != nil {
 		r.mazeMu.Unlock()
-		r.reply(m, "🧭 a maze round is already going — !go w/a/s/d to play.")
+		r.reply(m, "🧭 a maze round is already going — !up !down !left !right to play.")
 		return
 	}
 	mr := &mazeRound{
@@ -169,19 +191,29 @@ func (r *Router) startMaze(m ChatMessage) {
 	// the nearest minute for uptime and follow-age, so every join window this game
 	// will ever have came out as "0m".
 	joinWindow := time.Duration(cfg.Round.JoinCycles) * cfg.Tick
-	r.chat.Send(m.RoomID, fmt.Sprintf(
-		"🧭 Torch Maze! Type !go <path> to take a seat — %.0fs to join, %d seats. Moves are w/a/s/d (up to %d at once, e.g. !go wwd).",
-		joinWindow.Seconds(), cfg.Round.MaxSeats, cfg.Round.QueueMax))
+	r.sendMaze(m.RoomID, fmt.Sprintf(
+		"🧭 Torch Maze! %.0fs to take a seat, %d spots — type !up !down !left !right. One move per turn, %.0fs a turn.",
+		joinWindow.Seconds(), cfg.Round.MaxSeats, cfg.Tick.Seconds()))
+	if deniedFull {
+		r.reply(m, "full-screen is the channel owner's call — started in the corner instead.")
+	}
 }
 
-// goMaze handles !go: it seats a chatter during the join window and queues their
-// path.
+// moveMaze handles !up / !down / !left / !right: it seats a chatter during the
+// join window, and once the race is on, locks in their move for the next cycle.
 //
-// A successful move gets no chat reply on purpose. Five players on an 8s cycle
-// would be ~35 confirmations a round in a chat with fewer than ten people in it,
-// burying every human conversation; the overlay shows a locked-in indicator
-// instead. Only failures and seating answer back.
-func (r *Router) goMaze(rest string, m ChatMessage) {
+// **Joining does not also move you.** A command sent during the join window takes
+// the seat and nothing else. When it did both, a player's very first message —
+// the one they sent to join — banked a move they had not meant to make, so their
+// sprite advanced two cells on the opening cycles and they spent the rest of the
+// round one step away from where they believed they were. Every downstream
+// confusion followed from that.
+//
+// A successful move gets no chat reply on purpose. Five players on a 10s cycle
+// would be dozens of confirmations a round in a chat with fewer than ten people in
+// it, burying every human conversation; the overlay shows the locked-in move
+// instead. Only failures and seat refusals answer back.
+func (r *Router) moveMaze(d maze.Dir, m ChatMessage) {
 	if r.chat == nil {
 		return
 	}
@@ -193,13 +225,6 @@ func (r *Router) goMaze(rest string, m ChatMessage) {
 		return
 	}
 
-	path, err := maze.ParsePath(rest, mr.round.Cfg.QueueMax)
-	if err != nil {
-		r.mazeMu.Unlock()
-		r.reply(m, "moves are w/a/s/d (or up/down/left/right) — e.g. !go w or !go wwd.")
-		return
-	}
-
 	if _, seated := mr.round.PlayerBy(m.UserID); !seated {
 		if _, ok := mr.round.Join(m.UserID, m.User, displayName(m)); !ok {
 			full := len(mr.round.Players) >= mr.round.Cfg.MaxSeats
@@ -207,19 +232,31 @@ func (r *Router) goMaze(rest string, m ChatMessage) {
 			if full {
 				r.reply(m, "🧭 all seats are taken — you're up next round.")
 			} else {
-				r.reply(m, "🧭 seats are locked for this round — !go early next time.")
+				r.reply(m, "🧭 seats are locked for this round — get in early next time.")
 			}
 			return
 		}
+		// Seated by this command, and that is all it does.
+		r.persistMaze(mr)
+		payload := r.mazePayload(mr)
+		r.mazeMu.Unlock()
+		r.pushMaze(payload)
+		return
 	}
 
 	// The engine breaks a same-cycle race for one key by submission time. Chat
 	// messages carry no timestamp we can trust here, so this is arrival order at
 	// the bot — which is the IRC delivery order, since the reader is sequential,
 	// and is the same order Twitch itself put them in.
-	mr.round.Submit(m.UserID, path, time.Now())
+	mr.round.Submit(m.UserID, d, time.Now())
 	r.persistMaze(mr)
+	payload := r.mazePayload(mr)
 	r.mazeMu.Unlock()
+
+	// Push on the move, not just on the tick. The board is only redrawn once a
+	// cycle otherwise — and by then the move has been spent, so the direction a
+	// player just chose would never actually appear on screen.
+	r.pushMaze(payload)
 }
 
 // --- the cycle --------------------------------------------------------------
@@ -235,6 +272,20 @@ func (r *Router) runMaze(mr *mazeRound) {
 		case now := <-t.C:
 			if !r.tickMaze(mr, now) {
 				return
+			}
+			// Discard a tick that fired while this cycle was resolving. Go buffers
+			// one, so an overrunning cycle used to deliver the next tick the
+			// instant it returned — two cycles back to back, and a sprite that
+			// moved twice with nobody touching it.
+			//
+			// Belt and braces, and honestly so: queuing the chat sends removed the
+			// only thing that currently makes a cycle slow, so the suite cannot
+			// isolate this — an attempt to test it needed a fake slow enough to
+			// distort the very timings it was measuring. It is here for the next
+			// thing that gets added to a cycle, not for anything in one today.
+			select {
+			case <-t.C:
+			default:
 			}
 		}
 	}
@@ -263,14 +314,12 @@ func (r *Router) tickMaze(mr *mazeRound, now time.Time) bool {
 	}
 	// Order matters: what happened this cycle, then who got out, then the closing
 	// summary that names them.
-	if r.chat != nil {
-		for _, line := range lines {
-			r.chat.Send(mr.roomID, line)
-		}
+	for _, line := range lines {
+		r.sendMaze(mr.roomID, line)
 	}
 	r.awardMazeFinishers(mr, finished)
-	if endLine != "" && r.chat != nil {
-		r.chat.Send(mr.roomID, endLine)
+	if endLine != "" {
+		r.sendMaze(mr.roomID, endLine)
 	}
 	if done {
 		r.scheduleMazeClear(mr)
@@ -363,9 +412,7 @@ func (r *Router) awardMazeFinishers(mr *mazeRound, fs []mazeFinish) {
 				}
 			}
 		}
-		if r.chat != nil {
-			r.chat.Send(mr.roomID, line)
-		}
+		r.sendMaze(mr.roomID, line)
 	}
 }
 
@@ -470,7 +517,7 @@ func (mr *mazeRound) announce(evs []maze.Event) (lines []string, end string, toa
 			// door and cannot open it, which is the shape of the round in one line.
 			if p := mr.player(e.Seat); p != nil && !mr.saidBounce[e.Seat] {
 				mr.saidBounce[e.Seat] = true
-				texture = append(texture, "🚪 @"+p.Display+" is at the exit with no key!")
+				texture = append(texture, "🚪 @"+p.Display+" tried the door — no key!")
 			}
 		}
 		// Bonks are deliberately not in chat. They are by far the most frequent
@@ -518,7 +565,7 @@ func (mr *mazeRound) logFeed(e maze.Event) {
 	case maze.EventFreed:
 		line = "🔓 " + name
 	case maze.EventBounced:
-		line = "🚪 " + name + " no key"
+		line = "🚪 " + name + " — no key"
 	case maze.EventBonked:
 		line = "🧱 " + name
 	case maze.EventFinished:
@@ -612,6 +659,25 @@ func (r *Router) clearMaze(done *mazeRound) {
 	r.mazeMu.Unlock()
 
 	done.halt()
+	r.retireMaze()
+}
+
+// retireMaze frees the stage and clears the board, unless a new round has already
+// begun.
+//
+// The stage token and the overlay cannot be touched while holding mazeMu —
+// claimBoard takes its own lock and must never nest inside a per-game one — so
+// there is a gap between dropping the finished round and tearing its board down.
+// A !maze landing in that gap would otherwise have its brand-new round hidden and
+// un-staged by the old one's teardown. Re-checking narrows that to nothing worth
+// worrying about; the new round owns the stage it just claimed.
+func (r *Router) retireMaze() {
+	r.mazeMu.Lock()
+	superseded := r.maze != nil
+	r.mazeMu.Unlock()
+	if superseded {
+		return
+	}
 	r.releaseBoard(boardMaze)
 	r.pushMazeHidden()
 }
@@ -628,10 +694,9 @@ func (r *Router) forceEndMaze() {
 	if mr != nil {
 		mr.halt()
 	}
-	r.releaseBoard(boardMaze)
-	r.pushMazeHidden()
-	if mr != nil && r.chat != nil {
-		r.chat.Send(mr.roomID, "🛑 Maze skipped. !maze to play again.")
+	r.retireMaze()
+	if mr != nil {
+		r.sendMaze(mr.roomID, "🛑 Maze skipped. !maze to play again.")
 	}
 }
 
@@ -724,11 +789,15 @@ type mazePlayer struct {
 	HasKey   bool   `json:"hasKey,omitempty"`
 	StuckFor int    `json:"stuckFor,omitempty"`
 	Place    int    `json:"place,omitempty"`
-	// Locked says a move is buffered. It is deliberately not *which* move: seeing
-	// intent would let a player on a fast connection intercept one on a slow
-	// connection every cycle, which is the unfairness the whole tick model exists
-	// to remove.
-	Locked bool `json:"locked,omitempty"`
+	// Locked says a move is in; Move says which way.
+	//
+	// The direction was originally withheld, on the grounds that a viewer on a
+	// fast connection could read a slower player's intent off the board and
+	// counter it inside the same cycle. Playtesting overruled it: on a stream this
+	// size that interception is theoretical, while "did my command register, and
+	// which way am I about to go" is a question people have every single cycle.
+	Locked bool   `json:"locked,omitempty"`
+	Move   string `json:"move,omitempty"`
 }
 
 // mazeBoard is the render payload.
@@ -798,11 +867,14 @@ func (r *Router) mazePayload(mr *mazeRound) mazeBoard {
 		}
 	}
 	for _, p := range rd.Players {
-		b.Players = append(b.Players, mazePlayer{
+		row := mazePlayer{
 			Seat: p.Seat, Name: p.Display, At: p.At.String(),
 			HasKey: p.HasKey, StuckFor: p.StuckFor, Place: p.Place,
-			Locked: p.Queued() > 0,
-		})
+		}
+		if d, ok := p.NextDir(); ok {
+			row.Locked, row.Move = true, d.String()
+		}
+		b.Players = append(b.Players, row)
 	}
 	return b
 }

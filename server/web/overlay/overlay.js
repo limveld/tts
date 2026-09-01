@@ -356,6 +356,7 @@ let mazeTimer = null;
 let mazePrev = null; // previous payload, for change flashes
 
 const MAZE_SEATS = ['#e6482e', '#4fa4ff', '#3fbf5f', '#e8c547', '#b96fe0'];
+const MAZE_ARROWS = {up: '\u2191', down: '\u2193', left: '\u2190', right: '\u2192'};
 
 function mazeCell(s) {
   if (!s || s.length < 2) return null;
@@ -501,9 +502,11 @@ function renderMaze(d) {
             '<span class="m-swatch" style="background:' + MAZE_SEATS[p.seat % MAZE_SEATS.length] + '"></span>' +
             '<span class="m-name">' + escHtml(p.name || '') + '</span>' +
             '<span class="m-token">' + token + '</span>' +
-            // Locked says a move is in, never which one: showing intent would let
-            // a fast connection intercept a slow one every single cycle.
-            '<span class="m-lock' + (p.locked ? ' m-on' : '') + '"></span>' +
+            // The chosen direction, not just that one is chosen. It is the answer
+            // to "did my command register, and which way am I about to go", which
+            // is the question players have every cycle.
+            '<span class="m-lock' + (p.locked ? ' m-on' : '') + '">' +
+            (MAZE_ARROWS[p.move] || '') + '</span>' +
             '</div>';
   });
   for (let i = players.length; i < (d.seats || 5); i++) {

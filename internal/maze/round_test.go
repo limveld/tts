@@ -60,14 +60,18 @@ func start(t *testing.T, m *Map, cfg RoundConfig, users ...string) *Round {
 	return r
 }
 
-func submit(t *testing.T, r *Round, user, path string, at time.Time) {
+// testDirs is the WASD shorthand the tests write moves in. Chat itself uses
+// !up/!down/!left/!right; the engine only ever sees a Dir.
+var testDirs = map[string]Dir{"w": North, "a": West, "s": South, "d": East}
+
+func submit(t *testing.T, r *Round, user, dir string, at time.Time) {
 	t.Helper()
-	dirs, err := ParsePath(path, r.Cfg.QueueMax)
-	if err != nil {
-		t.Fatalf("ParsePath(%q): %v", path, err)
+	d, ok := testDirs[dir]
+	if !ok {
+		t.Fatalf("test wrote an unknown direction %q", dir)
 	}
-	if !r.Submit(user, dirs, at) {
-		t.Fatalf("Submit(%s, %q) refused", user, path)
+	if !r.Submit(user, d, at) {
+		t.Fatalf("Submit(%s, %q) refused", user, dir)
 	}
 }
 
@@ -230,11 +234,7 @@ func TestKeyConservation(t *testing.T) {
 				if !p.Racing() {
 					continue
 				}
-				path := make([]Dir, 1+rnd.Intn(cfg.QueueMax))
-				for i := range path {
-					path[i] = dirs[rnd.Intn(4)]
-				}
-				r.Submit(p.UserID, path, epoch.Add(time.Duration(rnd.Intn(1000))*time.Millisecond))
+				r.Submit(p.UserID, dirs[rnd.Intn(4)], epoch.Add(time.Duration(rnd.Intn(1000))*time.Millisecond))
 			}
 			r.Tick(epoch)
 
@@ -265,8 +265,9 @@ func TestBearTrapHoldsExactlyNCycles(t *testing.T) {
 	cfg.BearTrapCycles = 2
 	r := start(t, m, cfg, "bob")
 
-	submit(t, r, "bob", "dd", epoch) // onto the key, then into the trap
+	submit(t, r, "bob", "d", epoch) // onto the key
 	r.Tick(epoch)
+	submit(t, r, "bob", "d", epoch) // and on into the trap
 	evs := r.Tick(epoch)
 
 	p := player(t, r, "bob")
@@ -354,56 +355,51 @@ func TestTrapFiresForEverySimultaneousEntrant(t *testing.T) {
 
 // --- movement ---------------------------------------------------------------
 
-// TestQueueConsumedOnePerTick also covers the correction mechanic: a new
-// submission replaces the whole queue rather than appending to it, so the last
-// message before the tick is what happens.
-func TestQueueConsumedOnePerTick(t *testing.T) {
+// TestOneMessageOneMove covers the correction mechanic: a second command replaces
+// the first, so the last thing said before the tick is what happens — and a
+// player never banks more than a single cell per cycle however much they type.
+func TestOneMessageOneMove(t *testing.T) {
 	m := openBoard(6)
 	m.Start = Cell{2, 2}
 	r := start(t, m, testRoundConfig(), "bob")
 	p := player(t, r, "bob")
 
-	submit(t, r, "bob", "sss", epoch)
-	if p.Queued() != 3 {
-		t.Fatalf("Queued=%d want 3", p.Queued())
+	submit(t, r, "bob", "s", epoch)
+	if p.Queued() != 1 {
+		t.Fatalf("Queued=%d want 1", p.Queued())
 	}
-	r.Tick(epoch)
-	if p.Queued() != 2 {
-		t.Errorf("Queued=%d after one tick, want 2", p.Queued())
-	}
-
 	submit(t, r, "bob", "w", epoch)
 	if p.Queued() != 1 {
-		t.Errorf("Queued=%d after resubmitting, want the queue replaced not appended", p.Queued())
+		t.Errorf("Queued=%d after a correction, want the move replaced not stacked", p.Queued())
 	}
+	if d, ok := p.NextDir(); !ok || d != North {
+		t.Errorf("NextDir=%v/%v want the corrected direction", d, ok)
+	}
+
 	before := p.At
 	r.Tick(epoch)
 	if p.At.Y != before.Y-1 {
 		t.Errorf("moved to %v from %v, want the corrected direction (up)", p.At, before)
 	}
-}
+	if p.Queued() != 0 {
+		t.Errorf("Queued=%d after the tick, want the move spent", p.Queued())
+	}
 
-// TestQueueTruncatedToCap stops a revealed late-game board from being solved in
-// one message.
-func TestQueueTruncatedToCap(t *testing.T) {
-	m := openBoard(6)
-	m.Start = Cell{0, 0}
-	r := start(t, m, testRoundConfig(), "bob")
-	submit(t, r, "bob", "ssssss", epoch)
-	if got, want := player(t, r, "bob").Queued(), r.Cfg.QueueMax; got != want {
-		t.Errorf("Queued=%d want %d", got, want)
+	// Nothing carries over: standing still is the default.
+	at := p.At
+	r.Tick(epoch)
+	if p.At != at {
+		t.Errorf("moved to %v with nothing submitted, want to stay on %v", p.At, at)
 	}
 }
 
-// TestBonkClearsQueue is what makes committing to a path a real risk: queued
-// moves step into fogged cells whose walls are unknown, so over-committing costs
-// a cycle and the rest of the plan.
-func TestBonkClearsQueue(t *testing.T) {
+// TestBonkCostsTheCycle: walking into a wall spends the move and goes nowhere.
+func TestBonkCostsTheCycle(t *testing.T) {
 	m := openBoard(4)
 	m.Start = Cell{0, 0}
 	r := start(t, m, testRoundConfig(), "bob")
 
-	submit(t, r, "bob", "ass", epoch) // west from column A is the board edge
+	submit(t, r, "bob", "a", epoch) // west from column A is the board edge
 	evs := r.Tick(epoch)
 
 	p := player(t, r, "bob")
@@ -411,7 +407,7 @@ func TestBonkClearsQueue(t *testing.T) {
 		t.Errorf("at=%v want to have stayed on %v", p.At, m.Start)
 	}
 	if p.Queued() != 0 {
-		t.Errorf("Queued=%d after a bonk, want the plan discarded", p.Queued())
+		t.Errorf("Queued=%d after a bonk, want the move spent", p.Queued())
 	}
 	if !has(evs, EventBonked, p.Seat) {
 		t.Errorf("events=%v want bonked", evs)
@@ -536,7 +532,7 @@ func TestJoinClosesAtLockAndAtCapacity(t *testing.T) {
 	if _, ok := r.Join("d", "d", "d"); ok {
 		t.Error("joined after seats locked")
 	}
-	if r.Submit("d", []Dir{North}, epoch) {
+	if r.Submit("d", North, epoch) {
 		t.Error("an unseated user's move was accepted")
 	}
 }
@@ -685,78 +681,13 @@ func TestFinishedPlayerStopsPlaying(t *testing.T) {
 	if w.Place == 0 {
 		t.Fatal("winner did not finish")
 	}
-	if r.Submit("winner", []Dir{North}, epoch) {
+	if r.Submit("winner", North, epoch) {
 		t.Error("a finished player was allowed to queue a move")
 	}
 	at := w.At
 	r.Tick(epoch)
 	if w.At != at {
 		t.Errorf("finished player moved from %v to %v", at, w.At)
-	}
-}
-
-// --- input parsing ----------------------------------------------------------
-
-func TestParsePath(t *testing.T) {
-	cases := []struct {
-		in   string
-		max  int
-		want []Dir
-	}{
-		{"w", 3, []Dir{North}},
-		{"wwd", 3, []Dir{North, North, East}},
-		{"WAS", 3, []Dir{North, West, South}},
-		{"up", 3, []Dir{North}},
-		{"up up right", 3, []Dir{North, North, East}},
-		{"north,west", 3, []Dir{North, West}},
-		{"w up d", 3, []Dir{North, North, East}},
-		{"  d   ", 3, []Dir{East}},
-		{"wwwww", 3, []Dir{North, North, North}},
-		{"ssss", 2, []Dir{South, South}},
-	}
-	for _, tc := range cases {
-		got, err := ParsePath(tc.in, tc.max)
-		if err != nil {
-			t.Errorf("ParsePath(%q): %v", tc.in, err)
-			continue
-		}
-		if len(got) != len(tc.want) {
-			t.Errorf("ParsePath(%q)=%v want %v", tc.in, got, tc.want)
-			continue
-		}
-		for i := range got {
-			if got[i] != tc.want[i] {
-				t.Errorf("ParsePath(%q)=%v want %v", tc.in, got, tc.want)
-				break
-			}
-		}
-	}
-}
-
-// TestParsePathSingleLettersAreWASD pins the one collision between the two
-// direction schemes: w is up, and west has to be spelled out.
-func TestParsePathSingleLettersAreWASD(t *testing.T) {
-	got, err := ParsePath("w", 1)
-	if err != nil {
-		t.Fatalf("ParsePath(w): %v", err)
-	}
-	if got[0] != North {
-		t.Errorf("w parsed as %v, want up — single letters are WASD", got[0])
-	}
-	got, err = ParsePath("west", 1)
-	if err != nil {
-		t.Fatalf("ParsePath(west): %v", err)
-	}
-	if got[0] != West {
-		t.Errorf("west parsed as %v, want left", got[0])
-	}
-}
-
-func TestParsePathRejects(t *testing.T) {
-	for _, in := range []string{"", "   ", "xyz", "wq", "diagonal", "up left q"} {
-		if got, err := ParsePath(in, 3); err == nil {
-			t.Errorf("ParsePath(%q)=%v, want an error", in, got)
-		}
 	}
 }
 
@@ -827,7 +758,7 @@ func TestGreedyPlaythrough(t *testing.T) {
 			for _, p := range r.Players {
 				if p.Racing() && p.StuckFor == 0 {
 					if d, ok := greedyStep(m, p.At, greedyTarget(r, p)); ok {
-						r.Submit(p.UserID, []Dir{d}, epoch)
+						r.Submit(p.UserID, d, epoch)
 					}
 				}
 			}

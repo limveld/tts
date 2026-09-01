@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,7 +37,7 @@ func cycle(r *Router, mr *mazeRound) { r.tickMaze(mr, time.Now()) }
 func seat(t *testing.T, r *Router, mr *mazeRound, users ...string) {
 	t.Helper()
 	for _, u := range users {
-		r.Handle(emsg(u, "!go w", false))
+		r.Handle(emsg(u, "!up", false))
 	}
 	for mr.round.Phase == maze.PhaseJoining {
 		cycle(r, mr)
@@ -65,8 +66,8 @@ func TestMazeStartClaimsStageAndAnnounces(t *testing.T) {
 	if mr.round.Phase != maze.PhaseJoining {
 		t.Errorf("phase=%v, want joining", mr.round.Phase)
 	}
-	if len(chat.sends) != 1 || !strings.Contains(chat.sends[0], "!go") {
-		t.Errorf("open announcement=%v, want one line telling people to !go", chat.sends)
+	if len(chat.sends) != 1 || !strings.Contains(chat.sends[0], "!up") {
+		t.Errorf("open announcement=%v, want one line naming the direction commands", chat.sends)
 	}
 	if b := lastMazeBoard(t, ov); b.Size != mr.round.Map.Size || len(b.Cells) != b.Size*b.Size {
 		t.Errorf("pushed board size=%d cells=%d", b.Size, len(b.Cells))
@@ -118,16 +119,16 @@ func TestMazeSeatsLockResolvesKeyCount(t *testing.T) {
 func TestMazeFullHouseTurnsPeopleAway(t *testing.T) {
 	r, _, chat, _, mr := startTestMaze(t)
 	for _, u := range []string{"a", "b", "c", "d", "e"} {
-		r.Handle(emsg(u, "!go w", false))
+		r.Handle(emsg(u, "!up", false))
 	}
 	if got := len(mr.round.Players); got != 5 {
 		t.Fatalf("%d seated, want 5", got)
 	}
 
 	chat.replies = nil
-	r.Handle(emsg("f", "!go w", false))
+	r.Handle(emsg("f", "!up", false))
 	if got := len(mr.round.Players); got != 5 {
-		t.Errorf("%d seated after a sixth !go, want 5", got)
+		t.Errorf("%d seated after a sixth join, want 5", got)
 	}
 	if len(chat.replies) != 1 || !strings.Contains(chat.replies[0].text, "next round") {
 		t.Errorf("replies=%v, want the sixth player told they're up next round", chat.replies)
@@ -146,12 +147,12 @@ func TestMazeLockedSeatsTurnLatecomersAway(t *testing.T) {
 	}
 
 	chat.replies = nil
-	r.Handle(emsg("latecomer", "!go w", false))
+	r.Handle(emsg("latecomer", "!up", false))
 	if len(chat.replies) != 1 || !strings.Contains(chat.replies[0].text, "locked") {
 		t.Errorf("replies=%v, want a late joiner told seats are locked", chat.replies)
 	}
 	if got := len(mr.round.Players); got != 2 {
-		t.Errorf("%d players after a late !go, want 2", got)
+		t.Errorf("%d players after a late join, want 2", got)
 	}
 }
 
@@ -163,38 +164,26 @@ func TestMazeMovesAreSilent(t *testing.T) {
 	seat(t, r, mr, "bob", "carol")
 	sends, replies := len(chat.sends), len(chat.replies)
 
-	r.Handle(emsg("bob", "!go wwd", false))
-	r.Handle(emsg("carol", "!go s", false))
+	r.Handle(emsg("bob", "!up", false))
+	r.Handle(emsg("carol", "!down", false))
 
 	if len(chat.sends) != sends || len(chat.replies) != replies {
 		t.Errorf("a move spoke: sends+%d replies+%d",
 			len(chat.sends)-sends, len(chat.replies)-replies)
 	}
-	if p, _ := mr.round.PlayerBy("id-bob"); p.Queued() != 3 {
-		t.Errorf("bob queued %d moves, want 3", p.Queued())
+	p, _ := mr.round.PlayerBy("id-bob")
+	if d, ok := p.NextDir(); !ok || d != maze.North {
+		t.Errorf("bob has %v/%v locked in, want up", d, ok)
 	}
 }
 
-func TestMazeRejectsNonsenseAndMissingRound(t *testing.T) {
+func TestMazeMoveWithNoRoundPointsAtMaze(t *testing.T) {
 	r, _, _, chat := econRouter(t)
 	r.overlay = &fakeOverlay{}
 
-	r.Handle(emsg("bob", "!go w", false))
+	r.Handle(emsg("bob", "!up", false))
 	if len(chat.replies) != 1 || !strings.Contains(chat.replies[0].text, "!maze") {
-		t.Fatalf("replies=%v, want !go with no round to point at !maze", chat.replies)
-	}
-
-	r.Handle(emsg("alice", "!maze", false))
-	t.Cleanup(r.maze.halt)
-	r.maze.halt()
-	chat.replies = nil
-
-	r.Handle(emsg("bob", "!go sideways", false))
-	if len(chat.replies) != 1 || !strings.Contains(chat.replies[0].text, "w/a/s/d") {
-		t.Errorf("replies=%v, want a usage hint", chat.replies)
-	}
-	if got := len(r.maze.round.Players); got != 0 {
-		t.Errorf("%d players seated by an unparseable move, want 0", got)
+		t.Fatalf("replies=%v, want a move with no round to point at !maze", chat.replies)
 	}
 }
 
@@ -238,7 +227,7 @@ func TestMazePayloadWithholdsUnrevealedWalls(t *testing.T) {
 	r, _, _, ov, mr := startTestMaze(t)
 	seat(t, r, mr, "bob")
 	for i := 0; i < 3; i++ {
-		r.Handle(emsg("bob", "!go w", false))
+		r.Handle(emsg("bob", "!up", false))
 		cycle(r, mr)
 	}
 
@@ -267,28 +256,41 @@ func TestMazePayloadWithholdsUnrevealedWalls(t *testing.T) {
 	}
 }
 
-// TestMazePayloadWithholdsMoveDirection: showing intent would let a player on a
-// fast connection intercept one on a slow connection every cycle.
-func TestMazePayloadWithholdsMoveDirection(t *testing.T) {
+// TestMazePayloadCarriesTheChosenDirection reverses what this test used to
+// assert. The direction was withheld so a viewer on a fast connection could not
+// read a slower player's intent and counter it inside the cycle; playtesting
+// found that on a stream this size the interception is theoretical and the
+// feedback is not.
+func TestMazePayloadCarriesTheChosenDirection(t *testing.T) {
 	r, _, _, ov, mr := startTestMaze(t)
 	seat(t, r, mr, "bob")
-	r.Handle(emsg("bob", "!go w", false))
-	cycle(r, mr)
+	r.Handle(emsg("bob", "!left", false))
 
 	b := lastMazeBoard(t, ov)
-	var locked bool
+	var found bool
 	for _, p := range b.Players {
-		if p.Locked {
-			locked = true
+		if p.Name == "bob" {
+			found = true
+			if !p.Locked {
+				t.Errorf("bob has a move in but Locked=false")
+			}
+			if p.Move != "left" {
+				t.Errorf("Move=%q want %q", p.Move, "left")
+			}
 		}
 	}
-	blob, _ := json.Marshal(b)
-	for _, dir := range []string{`"up"`, `"down"`, `"left"`, `"right"`} {
-		if strings.Contains(string(blob), dir) {
-			t.Errorf("render payload leaks a queued direction (%s):\n%s", dir, blob)
+	if !found {
+		t.Fatalf("bob is not in the payload: %+v", b.Players)
+	}
+
+	// And it clears once the move is spent, so the HUD is never stale.
+	cycle(r, mr)
+	b = lastMazeBoard(t, ov)
+	for _, p := range b.Players {
+		if p.Name == "bob" && (p.Locked || p.Move != "") {
+			t.Errorf("after the cycle bob still shows %q locked=%v", p.Move, p.Locked)
 		}
 	}
-	_ = locked // locked-ness may or may not survive the tick; the leak is the point
 }
 
 func TestMazeSkipGameEndsRoundAndFreesStage(t *testing.T) {
@@ -318,8 +320,8 @@ func TestMazeSurvivesRestart(t *testing.T) {
 	r, st, _, _, mr := startTestMaze(t)
 	seat(t, r, mr, "bob", "carol", "dave")
 	for i := 0; i < 3; i++ {
-		r.Handle(emsg("bob", "!go w", false))
-		r.Handle(emsg("carol", "!go s", false))
+		r.Handle(emsg("bob", "!up", false))
+		r.Handle(emsg("carol", "!down", false))
 		cycle(r, mr)
 	}
 	if mr.round.Phase != maze.PhaseRacing {
@@ -518,7 +520,7 @@ func TestMazeGenerateFailureFreesTheStage(t *testing.T) {
 
 func TestMazeCommandsAreReserved(t *testing.T) {
 	r, _, _, _ := econRouter(t)
-	for _, cmd := range []string{"!maze", "!go", "!mazewins"} {
+	for _, cmd := range []string{"!maze", "!up", "!down", "!left", "!right", "!mazewins"} {
 		if !r.isBuiltin(cmd) {
 			t.Errorf("%s is not reserved; !addcom could shadow it", cmd)
 		}
@@ -737,7 +739,7 @@ func playOneMazeCycle(r *Router, mr *mazeRound) {
 				}
 			}
 			if found {
-				mr.round.Submit(p.UserID, []maze.Dir{pick}, time.Now())
+				mr.round.Submit(p.UserID, pick, time.Now())
 			}
 		}
 		r.tickMaze(mr, time.Now())
@@ -1006,5 +1008,243 @@ func TestMazeClosingSummaryFollowsTheFinishes(t *testing.T) {
 	if roundOver < lastFinish {
 		t.Errorf("the closing summary (line %d) is announced before the last finish (line %d):\n%s",
 			roundOver, lastFinish, strings.Join(chat.sends, "\n"))
+	}
+}
+
+// --- playtest regressions ---------------------------------------------------
+
+// TestMazeJoiningDoesNotAlsoMove is the bug the first live round found, and the
+// root cause of every complaint from it.
+//
+// The command that takes your seat used to bank a move as well, so a player's
+// very first message moved them a cell they had not asked for. Their sprite was
+// then permanently one step from where they believed it was — which is why, at
+// what they thought was the board edge, "left" walked them into the exit instead
+// of bonking a wall.
+func TestMazeJoiningDoesNotAlsoMove(t *testing.T) {
+	r, _, _, _, mr := startTestMaze(t)
+
+	r.Handle(emsg("bob", "!up", false))
+	p, ok := mr.round.PlayerBy("id-bob")
+	if !ok {
+		t.Fatal("!up during the join window did not seat anyone")
+	}
+	if p.Queued() != 0 {
+		t.Fatalf("joining also banked a move (%d queued)", p.Queued())
+	}
+
+	// Run the join window out; the player must still be exactly where they started.
+	for mr.round.Phase == maze.PhaseJoining {
+		cycle(r, mr)
+	}
+	if p.At != mr.round.Map.Start {
+		t.Fatalf("player moved to %v before the race began, want the start %v", p.At, mr.round.Map.Start)
+	}
+
+	// Their first move once racing is their first move, and it is worth one cell.
+	r.Handle(emsg("bob", "!up", false))
+	before := p.At
+	cycle(r, mr)
+	if p.At == before {
+		t.Fatal("the first racing move did nothing")
+	}
+	if d := abs(p.At.Y-before.Y) + abs(p.At.X-before.X); d != 1 {
+		t.Errorf("moved %d cells in one cycle, want exactly 1 (%v -> %v)", d, before, p.At)
+	}
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// TestMazeFullScreenIsOwnerOnly: full-stage covers whatever else is on screen for
+// several minutes, so it is the channel owner's call — but asking for it without
+// being the owner still gets you a round, in the corner.
+func TestMazeFullScreenIsOwnerOnly(t *testing.T) {
+	t.Run("owner gets it", func(t *testing.T) {
+		r, _, _, _ := econRouter(t)
+		r.overlay = &fakeOverlay{}
+		m := emsg("chan", "!maze full", true)
+		m.IsBroadcaster = true
+		r.Handle(m)
+		if r.maze == nil {
+			t.Fatal("round did not start")
+		}
+		t.Cleanup(r.maze.halt)
+		r.maze.halt()
+		if got := r.maze.cfg.Display; got != "full" {
+			t.Errorf("display=%q want full", got)
+		}
+	})
+
+	t.Run("a mod does not", func(t *testing.T) {
+		r, _, _, chat := econRouter(t)
+		r.overlay = &fakeOverlay{}
+		m := emsg("amod", "!maze full", true) // mod, but not the broadcaster
+		r.Handle(m)
+		if r.maze == nil {
+			t.Fatal("a non-owner asking for full should still get a round")
+		}
+		t.Cleanup(r.maze.halt)
+		r.maze.halt()
+		if got := r.maze.cfg.Display; got != "panel" {
+			t.Errorf("display=%q want panel", got)
+		}
+		if len(chat.replies) != 1 || !strings.Contains(chat.replies[0].text, "owner") {
+			t.Errorf("replies=%v, want one saying full-screen is the owner's call", chat.replies)
+		}
+	})
+
+	t.Run("bare !maze is a panel", func(t *testing.T) {
+		r, _, _, _, mr := startTestMaze(t)
+		_ = r
+		if got := mr.cfg.Display; got != "panel" {
+			t.Errorf("display=%q want panel by default", got)
+		}
+	})
+}
+
+// slowChat blocks on every send, standing in for a wedged Helix.
+type slowChat struct {
+	mu    sync.Mutex
+	sends []string
+	delay time.Duration
+}
+
+func (s *slowChat) Send(broadcasterID, text string) error {
+	time.Sleep(s.delay)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sends = append(s.sends, text)
+	return nil
+}
+
+func (s *slowChat) Reply(broadcasterID, parentID, text string) error {
+	return s.Send(broadcasterID, text)
+}
+
+func (s *slowChat) lines() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.sends...)
+}
+
+// TestMazeTickerDoesNotCollapseWhenChatIsSlow drives the real ticker, which every
+// other test deliberately halts — and which is why this went unnoticed.
+//
+// Chat sends used to run inline on the ticker goroutine, each an HTTPS call with
+// a timeout longer than a cycle. Go's ticker buffers one tick, so an overrun
+// delivered the next tick the instant the slow one returned: two cycles resolving
+// back to back and a sprite moving twice with no input. The assertion is on the
+// gap between overlay pushes, which happen once per cycle on the ticker.
+func TestMazeTickerDoesNotCollapseWhenChatIsSlow(t *testing.T) {
+	r, _, _, _ := econRouter(t)
+	ov := &fakeOverlay{}
+	r.overlay = ov
+	slow := &slowChat{delay: 90 * time.Millisecond}
+	r.chat = slow
+	r.startMazeChat()
+
+	const tick = 30 * time.Millisecond
+	cfg := defaultMazeConfig()
+	cfg.Tick = tick
+	r.mazeCfg = cfg
+
+	r.Handle(emsg("alice", "!maze", false))
+	mr := r.maze
+	if mr == nil {
+		t.Fatal("round did not start")
+	}
+	defer mr.halt()
+	r.Handle(emsg("bob", "!up", false))
+
+	// Let the real ticker run for a while.
+	deadline := time.Now().Add(600 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	mr.halt()
+
+	// Only pushes where the cycle actually advanced are cycles: starting a round
+	// and locking in a move both push as well, so that the board is live rather
+	// than redrawn once a tick.
+	ov.mu.Lock()
+	type mark struct {
+		cycle int
+		at    time.Time
+	}
+	var cycles []mark
+	for _, p := range ov.pushes {
+		b, ok := p.data.(mazeBoard)
+		if !ok {
+			continue
+		}
+		if len(cycles) == 0 || b.Cycle != cycles[len(cycles)-1].cycle {
+			cycles = append(cycles, mark{b.Cycle, p.at})
+		}
+	}
+	ov.mu.Unlock()
+
+	if len(cycles) < 4 {
+		t.Fatalf("only %d cycles ran; the ticker is not driving the round", len(cycles))
+	}
+	for i := 1; i < len(cycles); i++ {
+		if gap := cycles[i].at.Sub(cycles[i-1].at); gap < tick/2 {
+			t.Fatalf("cycles %d and %d resolved %v apart, less than half the %v tick — the ticker collapsed",
+				cycles[i-1].cycle, cycles[i].cycle, gap, tick)
+		}
+	}
+}
+
+// TestMazeNarrationKeepsItsOrder: the queue may drop a line when Helix is wedged,
+// but it must never reorder one. "@bob took the last key" after "@bob is OUT"
+// would read as a different round.
+func TestMazeNarrationKeepsItsOrder(t *testing.T) {
+	r, _, _, _ := econRouter(t)
+	slow := &slowChat{delay: 2 * time.Millisecond}
+	r.chat = slow
+	r.startMazeChat()
+
+	want := []string{"first", "second", "third", "fourth", "fifth"}
+	for _, line := range want {
+		r.sendMaze("room1", line)
+	}
+	for i := 0; i < 100 && len(slow.lines()) < len(want); i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	got := slow.lines()
+	if len(got) != len(want) {
+		t.Fatalf("got %d lines, want %d: %q", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("line %d = %q want %q (order is not preserved): %q", i, got[i], want[i], got)
+		}
+	}
+}
+
+// TestSFXNamesMayNotShadowCommands: sounds dispatch before the command engine, so
+// a sound named "up" does not conflict with !up — it wins, and !up stops
+// existing. A viewer's move would play an airhorn, with nothing logged.
+func TestSFXNamesMayNotShadowCommands(t *testing.T) {
+	r, _, _, _ := econRouter(t)
+
+	if err := r.checkSFXNames(); err != nil {
+		t.Fatalf("the test router's sounds should be clean: %v", err)
+	}
+
+	r.sfx["!up"] = struct{}{}
+	r.sfx["!wordle"] = struct{}{}
+	err := r.checkSFXNames()
+	if err == nil {
+		t.Fatal("a sound shadowing a command was accepted")
+	}
+	for _, want := range []string{"!up", "!wordle"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should name %s", err, want)
+		}
 	}
 }

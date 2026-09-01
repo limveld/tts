@@ -60,7 +60,7 @@ wordle_duration = "3m"     # how long a round runs before it auto-ends
 # leaderboard. Four shared mistakes or `connections_duration` elapsing ends the
 # round (remaining groups are revealed). Mods: !skipgame, !reveal, !shuffle.
 # Torch Maze: up to five chatters race a fogged maze for keys that are one short
-# of the field (!maze to open a round, !go w/a/s/d to play). The winner takes
+# of the field (!maze to open a round, !up !down !left !right to play). The winner takes
 # `maze_reward`; every later place takes half of the one above it, floored at 1,
 # so finishing at all is worth more than not finishing — which is the whole reason
 # the scramble for second and third after the winner exists. Only the winner is

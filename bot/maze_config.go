@@ -64,8 +64,7 @@ func LoadMazeConfig(path string) (mazeConfig, error) {
 		BearTraps      int `toml:"bear_traps"`
 		BearTrapCycles int `toml:"bear_trap_cycles"`
 
-		QueueMax int    `toml:"queue_max"`
-		Display  string `toml:"display"`
+		Display string `toml:"display"`
 	}{
 		TickSeconds:     int(cfg.Tick / time.Second),
 		MaxCycles:       cfg.Round.MaxCycles,
@@ -88,8 +87,7 @@ func LoadMazeConfig(path string) (mazeConfig, error) {
 		BearTraps:      cfg.Gen.BearTraps,
 		BearTrapCycles: cfg.Round.BearTrapCycles,
 
-		QueueMax: cfg.Round.QueueMax,
-		Display:  cfg.Display,
+		Display: cfg.Display,
 	}
 
 	md, err := toml.DecodeFile(path, &doc)
@@ -120,7 +118,6 @@ func LoadMazeConfig(path string) (mazeConfig, error) {
 		DeficitMinPlayers: doc.DeficitMinPlayers,
 		KeysMin:           doc.KeysMin,
 		BearTrapCycles:    doc.BearTrapCycles,
-		QueueMax:          doc.QueueMax,
 	}
 	cfg.Gen = maze.Config{
 		Size:       doc.MapSize,
@@ -166,14 +163,23 @@ func (c mazeConfig) validate() error {
 		return fmt.Errorf("join_cycles %d: must be at least 1, or seats never lock", c.Round.JoinCycles)
 	case c.Round.PlacementCycles < 0:
 		return fmt.Errorf("placement_cycles %d: cannot be negative", c.Round.PlacementCycles)
-	case c.Round.QueueMax < 1:
-		return fmt.Errorf("queue_max %d: must be at least 1, or nobody can move", c.Round.QueueMax)
 	case c.Round.KeyDeficit < 0:
 		return fmt.Errorf("key_deficit %d: cannot be negative", c.Round.KeyDeficit)
 	case c.Round.KeysMin < 0:
 		return fmt.Errorf("keys_min %d: cannot be negative", c.Round.KeysMin)
 	case c.Round.BearTrapCycles < 0:
 		return fmt.Errorf("bear_trap_cycles %d: cannot be negative", c.Round.BearTrapCycles)
+	}
+
+	// The two round limits are checked independently above, and independently they
+	// both look fine — which is how a 10s tick with 60 cycles and a 320s guard
+	// boots cleanly and then ends every round at cycle 30 with the overlay still
+	// showing "CYCLE 30 / 60". Join ticks burn wall clock without advancing the
+	// cycle counter, so cycle N lands at (join_cycles + N) x tick.
+	if need := (c.Round.JoinCycles + c.Round.MaxCycles) * int(c.Tick/time.Second); c.Round.MaxSeconds < need {
+		return fmt.Errorf(
+			"max_seconds %d is below %d: %d cycles plus a %d-cycle join window at %.0fs each needs that long, so the wall-clock guard would end every round early",
+			c.Round.MaxSeconds, need, c.Round.MaxCycles, c.Round.JoinCycles, c.Tick.Seconds())
 	}
 
 	// The board's own rules are the generator's to enforce, and the honest way to

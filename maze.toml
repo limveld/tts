@@ -1,6 +1,10 @@
 # Torch Maze: up to five chatters race a fogged 6x6 maze for keys that are one
-# short of the field. Open a round with !maze, play with !go w/a/s/d, see the
-# leaderboard with !mazewins. A mod can !skipgame.
+# short of the field. Open a round with !maze, play with !up !down !left !right,
+# see the leaderboard with !mazewins. A mod can !skipgame.
+#
+# !maze opens the board in the corner panel. "!maze full" puts it on the whole
+# stage and is the channel owner's command alone — it covers whatever else is on
+# screen for several minutes.
 #
 # EVERY SETTING BELOW IS COMMENTED OUT AND SHOWS ITS BUILT-IN DEFAULT.
 #
@@ -31,14 +35,20 @@
 # transport. 8 seconds fits the loop inside a single cycle.
 #
 # Measure your own OBS-to-viewer delay once and set this from it.
-# tick_seconds = 8
+# tick_seconds = 10
 
 # Round length. Both are checked; whichever trips first ends the round.
 # max_cycles is the real limit and max_seconds is a wall-clock guard against
-# pauses and desync. Measured over played-out rounds, a winner emerges around
-# cycle 16 and almost always before 24, so 36 is headroom rather than a target.
-# max_cycles  = 36
-# max_seconds = 320
+# pauses and desync. Measured over played-out rounds a winner emerges around cycle
+# 16 and almost always before 24, so 60 is a backstop that rarely binds.
+#
+# The two are checked against each other at startup, and the bot refuses to run if
+# the guard is too tight. Join ticks burn wall clock without advancing the cycle
+# counter, so cycle N lands at (join_cycles + N) x tick_seconds — 620s here. Set
+# max_seconds below that and the guard silently ends every round early, with the
+# overlay still counting up toward a cycle cap it will never reach.
+# max_cycles  = 60
+# max_seconds = 660
 
 # The frozen window at the top of a round, in cycles: the board is up, seats are
 # filling, nothing moves. It exists because the key count depends on how many
@@ -117,21 +127,26 @@
 # bear_traps = 1
 
 # Cycles a bear trap holds you. Your key stays with you while you are stuck.
-# At 8 seconds a cycle, 3 is nearly half a minute of sitting still.
+# At 10 seconds a cycle, 3 is half a minute of sitting still.
 # bear_trap_cycles = 2
 
 # ---- input and display -------------------------------------------------------
 
-# Moves accepted per !go, consumed one per cycle. Queueing lets people type once
-# and walk several cells instead of every eight seconds, and it sidesteps
-# Twitch's rule that drops a message identical to your previous one — walking a
-# straight corridor would otherwise silently stop working.
+# One message, one move: !up !down !left !right, and you stay put unless you type.
 #
-# The cap matters: uncapped, someone types the whole remaining solution in one
-# message the moment the fog lifts.
-# queue_max = 3
+# There used to be a "!go <path>" that banked several cells from one message. It
+# was removed after a live round: the message that took your seat banked a move
+# too, so your first command moved you a cell you had not asked for and you spent
+# the rest of the round one step from where you thought you were.
+#
+# Watch for one consequence. Twitch drops a message identical to your previous one
+# within 30 seconds, and walking a straight corridor now means sending the same
+# command twice. Moderators and the broadcaster appear to be exempt, so testing it
+# yourself will not tell you — if viewers report moves going missing, that is this.
 
-# How the overlay draws the board. "full" claims the stage for a dedicated maze
-# scene; "panel" tucks it into the same corner the other games use, which is
-# tidier but hard to read on a phone at 6x6 with five runners on the board.
-# display = "full"
+# How a bare !maze draws the board. "panel" tucks it into the same corner the
+# other games use; "full" claims the stage. Panel is the default because the maze
+# should not cover your scene unasked — but it is small, and at 6x6 with five
+# runners it is hard to read on a phone, which is how most of Twitch watches. When
+# the maze is the main event, "!maze full" is there.
+# display = "panel"

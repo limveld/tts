@@ -528,8 +528,21 @@ html, body {
   white-space: nowrap;
 }
 #maze .m-token { font-family: var(--mono); font-size: calc(var(--m-tile) * 0.36); }
-/* Locked shows only *that* a move is in, never which one. */
-#maze .m-lock { width: calc(var(--m-tile) * 0.2); height: calc(var(--m-tile) * 0.2); flex: none; background: #2c3145; }
+/* The move a player has locked in, as an arrow. Empty and dim when they have not
+   chosen yet, so the row reads as "waiting" rather than as nothing. */
+#maze .m-lock {
+  width: calc(var(--m-tile) * 0.42);
+  height: calc(var(--m-tile) * 0.42);
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: calc(var(--m-tile) * 0.34);
+  line-height: 1;
+  color: #0f1420;
+  background: #2c3145;
+}
 #maze .m-lock.m-on { background: var(--gold); box-shadow: 0 0 5px var(--gold); }
 #maze .m-row.m-done { opacity: 0.62; }
 

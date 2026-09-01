@@ -20,12 +20,13 @@ type fakeOverlay struct {
 type overlayPush struct {
 	kind string
 	data any
+	at   time.Time // when it was pushed; the maze's cycle pacing is asserted on this
 }
 
 func (f *fakeOverlay) Push(kind string, data any) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.pushes = append(f.pushes, overlayPush{kind, data})
+	f.pushes = append(f.pushes, overlayPush{kind, data, time.Now()})
 }
 
 // last returns the most recent push of the given kind, or (zero,false).

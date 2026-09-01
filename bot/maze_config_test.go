@@ -109,6 +109,15 @@ seed             = 0
 // TestMazeConfigDerivesKeySlotsFromSeats: writing the slot count separately would
 // let it drift below the seat cap, and the engine clamps rather than complains —
 // so the deficit would quietly deepen instead of erroring.
+// TestMazeConfigAcceptsAGuardThatIsExactlyLongEnough pins the boundary, so the
+// cross-check cannot drift into rejecting a config that is in fact fine.
+func TestMazeConfigAcceptsAGuardThatIsExactlyLongEnough(t *testing.T) {
+	p := writeMazeToml(t, "tick_seconds = 10\nmax_cycles = 60\njoin_cycles = 2\nmax_seconds = 620\n")
+	if _, err := LoadMazeConfig(p); err != nil {
+		t.Errorf("620s is exactly (2+60)x10 and should be accepted: %v", err)
+	}
+}
+
 func TestMazeConfigDerivesKeySlotsFromSeats(t *testing.T) {
 	p := writeMazeToml(t, "max_seats = 3\n")
 	got, err := LoadMazeConfig(p)
@@ -142,6 +151,10 @@ func TestMazeConfigRejectsBadSyntax(t *testing.T) {
 
 // TestMazeConfigRejectsUnplayableValues. Each of these is fatal at startup rather
 // than a !maze that refuses to open a round mid-stream.
+//
+// The pacing pair is the one that motivated the cross-check: max_cycles and
+// max_seconds each look fine on their own, and together they silently end every
+// round at half its length.
 func TestMazeConfigRejectsUnplayableValues(t *testing.T) {
 	cases := []struct{ name, body string }{
 		{"zero tick", "tick_seconds = 0"},
@@ -151,7 +164,6 @@ func TestMazeConfigRejectsUnplayableValues(t *testing.T) {
 		{"no wall clock", "max_seconds = 0"},
 		{"seats never lock", "join_cycles = 0"},
 		{"negative placement", "placement_cycles = -1"},
-		{"nobody can move", "queue_max = 0"},
 		{"negative deficit", "key_deficit = -1"},
 		{"negative keys_min", "keys_min = -1"},
 		{"negative bear trap", "bear_trap_cycles = -1"},
@@ -160,6 +172,8 @@ func TestMazeConfigRejectsUnplayableValues(t *testing.T) {
 		{"board too small", "map_size = 2"},
 		{"inverted key band", "key_band_min = 6\nkey_band_max = 3"},
 		{"board too crowded", "map_size = 3\nmax_seats = 5\nspikes = 4\nbear_traps = 4"},
+		{"wall-clock guard shorter than the cycle cap", "tick_seconds = 10\nmax_cycles = 60\nmax_seconds = 320"},
+		{"guard just barely too short", "tick_seconds = 10\nmax_cycles = 60\njoin_cycles = 2\nmax_seconds = 619"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

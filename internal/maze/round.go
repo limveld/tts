@@ -1,10 +1,7 @@
 package maze
 
 import (
-	"errors"
-	"fmt"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -179,7 +176,6 @@ type RoundConfig struct {
 	KeysMin           int `json:"keysMin"`
 
 	BearTrapCycles int `json:"bearTrapCycles"`
-	QueueMax       int `json:"queueMax"` // moves accepted per submission
 }
 
 // DefaultRoundConfig is the shipping ruleset. TickSeconds is not here because
@@ -187,16 +183,20 @@ type RoundConfig struct {
 // caller owns the timer.
 func DefaultRoundConfig() RoundConfig {
 	return RoundConfig{
-		JoinCycles:        2,
-		MaxSeats:          5,
-		MaxCycles:         36,
-		MaxSeconds:        320,
+		JoinCycles: 2,
+		MaxSeats:   5,
+		MaxCycles:  60,
+		// Comfortably clear of MaxCycles at the shipping tick: cycle N lands at
+		// (JoinCycles+N) x tick, so 62 x 10s = 620s of play. This is a guard
+		// against pauses and desync, not a second round limit, and a value below
+		// that product silently truncates every round — bot/maze_config.go
+		// cross-checks the two for exactly that reason.
+		MaxSeconds:        660,
 		PlacementCycles:   12,
 		KeyDeficit:        1,
 		DeficitMinPlayers: 3,
 		KeysMin:           1,
 		BearTrapCycles:    2,
-		QueueMax:          3,
 	}
 }
 
@@ -221,10 +221,23 @@ type Player struct {
 // Racing reports whether p is still in contention.
 func (p *Player) Racing() bool { return p.Place == 0 }
 
-// Queued is how many moves p has buffered. The overlay shows *that* a move is
-// locked and never which direction, so that a player on a slow connection cannot
-// be intercepted by one on a fast connection reading their intent off the board.
+// Queued reports whether p has a move locked in for the next cycle.
 func (p *Player) Queued() int { return len(p.queue) }
+
+// NextDir is the move p has locked in, if any.
+//
+// This is shown on the overlay. The original design withheld it: a viewer on a
+// fast connection can read a slower player's intent off the board and counter it
+// within the same cycle, which is the unfairness the fixed tick exists to remove.
+// Playtesting reversed that — on a stream this size the interception is
+// theoretical while "did my command register, and which way am I about to go" is
+// a question people actually have every cycle.
+func (p *Player) NextDir() (Dir, bool) {
+	if len(p.queue) == 0 {
+		return North, false
+	}
+	return p.queue[0], true
+}
 
 // Round is one game in flight.
 type Round struct {
@@ -295,16 +308,22 @@ func (r *Round) Join(userID, login, display string) (seat int, ok bool) {
 	return p.Seat, true
 }
 
-// Submit replaces a player's queued path — the whole queue, not a suffix, so the
-// most recent message always wins and a correction is never half-applied. at is
-// when the message was sent; it is the tie-break when two players reach the same
-// key on the same cycle.
+// Submit locks in a player's move for the next cycle, replacing whatever they had
+// chosen before — so the most recent message always wins and a correction is never
+// half-applied. at is when the message was sent; it is the tie-break when two
+// players reach the same key on the same cycle.
 //
-// Submitting while bear-trapped is allowed. The trap already cleared the queue,
-// and letting someone line up their escape while stuck is friendlier than
-// swallowing the input with no explanation.
-func (r *Round) Submit(userID string, path []Dir, at time.Time) bool {
-	if r.Phase == PhaseDone || len(path) == 0 {
+// One message, one move. An earlier version accepted a path of several moves,
+// which existed to sidestep Twitch dropping a message identical to the sender's
+// previous one. It was removed because it made a player's first command — the one
+// that also took their seat — bank a move they had not meant to make, and they
+// then spent the round one cell away from where they believed they were.
+//
+// Submitting while bear-trapped is allowed. The trap already cleared the move, and
+// letting someone line up their escape while stuck is friendlier than swallowing
+// the input with no explanation.
+func (r *Round) Submit(userID string, d Dir, at time.Time) bool {
+	if r.Phase == PhaseDone {
 		return false
 	}
 	s, ok := r.seats[userID]
@@ -315,10 +334,7 @@ func (r *Round) Submit(userID string, path []Dir, at time.Time) bool {
 	if !p.Racing() {
 		return false
 	}
-	if len(path) > r.Cfg.QueueMax {
-		path = path[:r.Cfg.QueueMax]
-	}
-	p.queue = append(p.queue[:0:0], path...)
+	p.queue = []Dir{d}
 	p.queuedAt = at
 	return true
 }
@@ -627,55 +643,6 @@ func (r *Round) Placements() []*Player {
 }
 
 // --- input parsing ----------------------------------------------------------
-
-// Single letters are WASD, not compass points. The two schemes collide on exactly
-// one letter — w is up here, not west — and silently picking one would make a
-// player's move go the opposite way from what they meant. Compass points are
-// available spelled out, where there is no ambiguity to resolve.
-var letterDirs = map[rune]Dir{'w': North, 'a': West, 's': South, 'd': East}
-
-var wordDirs = map[string]Dir{
-	"up": North, "down": South, "left": West, "right": East,
-	"north": North, "south": South, "east": East, "west": West,
-}
-
-// ParsePath turns a chat argument into a move queue. It accepts a run of WASD
-// letters ("wwd"), spelled-out directions ("up up right"), or a mix, separated by
-// spaces or commas.
-//
-// A path longer than max is truncated rather than rejected: someone who typed
-// five moves meant the first three as much as the last two, and dropping their
-// whole turn over it would be the harsher reading. The caller gets the truncated
-// path and can compare lengths if it wants to say so.
-func ParsePath(s string, max int) ([]Dir, error) {
-	if max <= 0 {
-		max = 1
-	}
-	fields := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
-		return r == ' ' || r == ',' || r == '\t' || r == '+'
-	})
-	var out []Dir
-	for _, f := range fields {
-		if d, ok := wordDirs[f]; ok {
-			out = append(out, d)
-			continue
-		}
-		for _, c := range f {
-			d, ok := letterDirs[c]
-			if !ok {
-				return nil, fmt.Errorf("%q isn't a direction", f)
-			}
-			out = append(out, d)
-		}
-	}
-	if len(out) == 0 {
-		return nil, errors.New("no direction given")
-	}
-	if len(out) > max {
-		out = out[:max]
-	}
-	return out, nil
-}
 
 func (d Dir) String() string {
 	switch d {
