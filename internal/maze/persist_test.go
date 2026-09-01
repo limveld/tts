@@ -402,3 +402,55 @@ func TestParseCellRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestEventKindWireIsComplete guards the storage vocabulary rather than any one
+// value.
+//
+// EventKind.String() currently produces the same words as eventKindWire, so a
+// test comparing them would prove nothing and pass even if the archive used the
+// display text — which is the thing the file header forbids, because display text
+// gets reworded and a storage format cannot. What is actually at risk is a kind
+// added later and not added here: String() would fall through its default and
+// silently record it as "round-ended", while the map returns the empty string.
+//
+// So this asserts every kind has its own non-empty spelling, which is the property
+// that has to hold, and fails loudly the day someone adds one.
+func TestEventKindWireIsComplete(t *testing.T) {
+	seen := map[string]EventKind{}
+	for k := EventSeatsLocked; k <= EventRoundEnded; k++ {
+		wire, ok := eventKindWire[k]
+		if !ok || wire == "" {
+			t.Errorf("EventKind %d (%s) has no storage spelling — add it to eventKindWire", k, k)
+			continue
+		}
+		if prev, dup := seen[wire]; dup {
+			t.Errorf("EventKind %d and %d both store as %q", prev, k, wire)
+		}
+		seen[wire] = k
+	}
+	if len(seen) != int(EventRoundEnded)+1 {
+		t.Errorf("%d distinct spellings for %d kinds", len(seen), int(EventRoundEnded)+1)
+	}
+}
+
+// TestEventWireWithholdsTheZeroCell: Event.At is a zero Cell for round-level
+// events, and Cell.String() renders that as "A1" — a real board square. Recording
+// it would put a plausible lie in every seats-locked and round-ended row.
+func TestEventWireWithholdsTheZeroCell(t *testing.T) {
+	for _, k := range []EventKind{EventSeatsLocked, EventRoundEnded} {
+		if _, at, _ := (Event{Kind: k}).Wire(); at != "" {
+			t.Errorf("%s carries position %q", k, at)
+		}
+	}
+	// And every kind that does happen somewhere keeps it. Listed exhaustively
+	// rather than by sampling: dropping one from cellKinds is a silent loss of
+	// position data on exactly that kind, which a sample would not notice.
+	for _, k := range []EventKind{
+		EventBonked, EventBounced, EventKeyTaken, EventKeyDropped,
+		EventSpiked, EventTrapped, EventFreed, EventFinished,
+	} {
+		if _, at, _ := (Event{Kind: k, At: Cell{X: 2, Y: 3}}).Wire(); at != "C4" {
+			t.Errorf("%s lost its position: %q", k, at)
+		}
+	}
+}

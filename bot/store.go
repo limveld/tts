@@ -11,7 +11,7 @@ import (
 //
 // The store's capabilities are declared as separate interfaces in the files that
 // consume them — CommandStore in commands.go, Ledger in economy.go, WordleWins
-// in wordle.go, ConnectionsWins in connections.go, MazeWins in maze.go,
+// in wordle.go, ConnectionsWins in connections.go, MazeWins and MazeLog in maze.go,
 // ChatLog in chatlog.go,
 // SettingStore here — so a consumer's dependencies are visible where the
 // consumer is, and its fakes have to prove exactly that much. Store is the
@@ -42,6 +42,7 @@ type Store interface {
 	WordleWins
 	ConnectionsWins
 	MazeWins
+	MazeLog
 	ChatLog
 
 	Close() error

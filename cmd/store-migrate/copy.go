@@ -83,8 +83,8 @@ func copyAll(src, dst migrateStore, dstBackend store.Backend) (map[string]int64,
 // Two Postgres-only adjustments, both because the destination column is not
 // quite the source column:
 //
-//   - game_rounds.state is cast to jsonb: it arrives as text from SQLite, and
-//     JSONB won't take it otherwise.
+//   - the JSONB columns are cast: they arrive as text from SQLite, and JSONB
+//     won't take them otherwise. See jsonbColumns.
 //   - ledger and chat_message gain ts_at, their partition key, which exists only
 //     on Postgres. It is derived rather than copied — the same to_timestamp(ts)
 //     every INSERT in store/postgres writes — and it re-uses the ts placeholder
@@ -109,6 +109,19 @@ func copyAll(src, dst migrateStore, dstBackend store.Backend) (map[string]int64,
 // and an integer in another is a schema worth fixing rather than working around.
 var boolColumns = map[string]bool{
 	"is_mod": true, "is_sub": true, "is_vip": true, "is_broadcaster": true,
+}
+
+// jsonbColumns are the columns Postgres declares JSONB where SQLite stores TEXT.
+// Keyed table.column rather than by bare name, unlike boolColumns: "state" and
+// "input" are documents in these tables and could perfectly well be ordinary text
+// somewhere else, so the pair is what is actually true.
+//
+// Missing an entry here is not subtle — the copy dies with "column is of type
+// jsonb but expression is of type text" — but it dies at cutover, which is the
+// worst time to find out.
+var jsonbColumns = map[string]bool{
+	"game_rounds.state": true,
+	"maze_rounds.input": true,
 }
 
 func insertStatement(table string, columns []string, n int, backend store.Backend) (string, []any) {
@@ -138,7 +151,7 @@ func insertStatement(table string, columns []string, n int, backend store.Backen
 			}
 			if pg {
 				fmt.Fprintf(&b, "$%d", arg)
-				if table == "game_rounds" && col == "state" {
+				if jsonbColumns[table+"."+col] {
 					b.WriteString("::jsonb")
 				}
 				if derivedTsAt && col == "ts" {

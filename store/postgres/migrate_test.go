@@ -13,7 +13,7 @@ import (
 // wantSchemaVersion is the highest migration in migrations/. It must stay in step
 // with store/sqlite's — the two dialects are meant to describe the same schema,
 // and the migrate tool prints both.
-const wantSchemaVersion = 7
+const wantSchemaVersion = 8
 
 func schemaVersion(t *testing.T, s *Store) int64 {
 	t.Helper()
@@ -51,7 +51,7 @@ func TestMigrateFreshSchema(t *testing.T) {
 	// Every table the two migrations create is present and usable.
 	for _, table := range []string{
 		"commands", "users", "ledger", "settings",
-		"wordle_wins", "connections_wins", "maze_wins", "accounts", "game_rounds",
+		"wordle_wins", "connections_wins", "maze_wins", "maze_rounds", "maze_events", "accounts", "game_rounds",
 		"ledger_refs", "ledger_opening", "ledger_folded",
 	} {
 		var n int

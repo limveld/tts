@@ -69,6 +69,16 @@ var tables = []struct {
 	}},
 	{"chat_stats", []string{"user_id", "login", "display", "messages", "chars", "first_ts", "last_ts"}},
 	{"chat_folded", []string{"name", "from_ts", "through_ts", "rows", "folded_at"}},
+	// The maze replay log. Permanent by design, so leaving it out of this list
+	// would drop every archived round at cutover — and verify would not notice,
+	// because its row-count check ranges over this same slice.
+	{"maze_rounds", []string{
+		"id", "room_id", "seed", "started_at", "ended_at", "tick_ms", "cycles", "reason",
+		"players", "finishers", "winner_id", "winner_login", "winner_display", "input",
+	}},
+	{"maze_events", []string{
+		"round_id", "seq", "cycle", "kind", "seat", "user_id", "login", "display", "at", "n", "reason",
+	}},
 }
 
 // games is every game that can have an in-flight round. It comes from store so

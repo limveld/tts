@@ -49,6 +49,23 @@ func seedSource(t *testing.T) string {
 	if _, err := s.Add(store.Command{Name: "discord", Response: "join $user", Cooldown: 5}); err != nil {
 		t.Fatal(err)
 	}
+	// A logged maze round, so the replay tables are actually exercised by the copy.
+	// A table that is empty on both sides "matches", so an unseeded table is an
+	// uncopied table nobody would notice.
+	if err := s.MazeLogRound(store.MazeRound{
+		ID: "1700000000000-1092", RoomID: "12345", Seed: 4242,
+		StartedAt: 1_700_000_000, EndedAt: 1_700_000_200, TickMS: 10000,
+		Cycles: 18, Reason: "placements-closed", Players: 5, Finishers: 4,
+		WinnerID: "u1", WinnerLogin: "bob", WinnerDisplay: "Bob",
+		Input: []byte(`{"board":{"size":6},"moves":[{"cycle":1,"seat":0,"dir":"up"}]}`),
+	}, []store.MazeEvent{
+		{RoundID: "1700000000000-1092", Seq: 0, Cycle: 0, Kind: "seats-locked", Seat: -1, N: 4},
+		{RoundID: "1700000000000-1092", Seq: 1, Cycle: 3, Kind: "key-taken", Seat: 0,
+			UserID: "u1", Login: "bob", Display: "Bob", At: "C4", N: 3},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := s.Add(store.Command{Name: "socials", Response: "links"}); err != nil {
 		t.Fatal(err)
 	}

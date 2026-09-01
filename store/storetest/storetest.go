@@ -52,6 +52,12 @@ type Store interface {
 	MazeAddWin(userID, login, display string) (wins int, err error)
 	MazeLeaderboard(n int) ([]store.MazeWin, error)
 
+	// Maze replay log
+	MazeLogRound(r store.MazeRound, evs []store.MazeEvent) error
+	MazeRoundLog(n int) ([]store.MazeRound, error)
+	MazeRoundByID(id string) (store.MazeRound, bool, error)
+	MazeRoundEvents(id string) ([]store.MazeEvent, error)
+
 	// Chat log
 	LogMessages(msgs []store.ChatMessage) error
 	MarkDeleted(roomID, msgID string, at int64) (found bool, err error)
@@ -88,6 +94,13 @@ func Run(t *testing.T, newStore New) {
 		{"ConnectionsTally", testConnectionsTally},
 		{"MazeTally", testMazeTally},
 		{"TalliesAreIndependent", testTalliesAreIndependent},
+		{"MazeLogRoundTrip", testMazeLogRoundTrip},
+		{"MazeLogIsIdempotent", testMazeLogIsIdempotent},
+		{"MazeLogOrderIsEmissionOrder", testMazeLogOrderIsEmissionOrder},
+		{"MazeRoundLogNewestFirst", testMazeRoundLogNewestFirst},
+		{"MazeLogEmptyEvents", testMazeLogEmptyEvents},
+		{"MazeRoundMissing", testMazeRoundMissing},
+		{"MazeLogDoesNotTouchTallies", testMazeLogDoesNotTouchTallies},
 		{"RoundSaveLoadClear", testRoundSaveLoadClear},
 		{"RoundOverwrite", testRoundOverwrite},
 		{"ChatLogRoundTrip", testChatLogRoundTrip},

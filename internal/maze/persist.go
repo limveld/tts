@@ -109,6 +109,51 @@ var trapKindWire = map[TrapKind]string{Spike: "spike", BearTrap: "bear"}
 
 var dirWire = map[Dir]string{North: "up", East: "right", South: "down", West: "left"}
 
+// eventKindWire is the storage spelling of an event, for the replay log.
+//
+// EventKind.String() exists and looks like it would do — it must not be used.
+// Beyond the rule above (display text may be reworded, a storage format may not),
+// its switch ends in a default arm, so a kind added later and forgotten there
+// would be *silently recorded as round-ended* rather than failing. A map has no
+// default: a missing entry writes the empty string, which the round-trip test
+// catches.
+var eventKindWire = map[EventKind]string{
+	EventSeatsLocked: "seats-locked",
+	EventBonked:      "bonked",
+	EventBounced:     "bounced",
+	EventKeyTaken:    "key-taken",
+	EventKeyDropped:  "key-dropped",
+	EventSpiked:      "spiked",
+	EventTrapped:     "trapped",
+	EventFreed:       "freed",
+	EventFinished:    "finished",
+	EventRoundEnded:  "round-ended",
+}
+
+// cellKinds are the events that happen somewhere. The rest are round-level and
+// carry a zero Cell — which Cell.String() renders as "A1", a real board position.
+// Recording that would put a plausible-looking lie in every seats-locked and
+// round-ended row and quietly poison any query that asks where things happen.
+var cellKinds = map[EventKind]bool{
+	EventBonked:     true,
+	EventBounced:    true,
+	EventKeyTaken:   true,
+	EventKeyDropped: true,
+	EventSpiked:     true,
+	EventTrapped:    true,
+	EventFreed:      true,
+	EventFinished:   true,
+}
+
+// Wire returns the storage spelling of e's kind, the cell it happened on (empty
+// when the kind has no position), and the end reason for a round-ended event.
+func (e Event) Wire() (kind, at, reason string) {
+	if cellKinds[e.Kind] {
+		at = e.At.String()
+	}
+	return eventKindWire[e.Kind], at, endReasonWire[e.Reason]
+}
+
 // invert builds a wire-to-value lookup, so each vocabulary is written once and
 // cannot drift between the two directions.
 func invert[K comparable, V comparable](m map[K]V) map[V]K {

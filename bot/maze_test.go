@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"tts/internal/maze"
+	"tts/store"
 )
 
 // startTestMaze opens a round and stops its real ticker, so a test drives cycles
@@ -1246,5 +1247,224 @@ func TestSFXNamesMayNotShadowCommands(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q should name %s", err, want)
 		}
+	}
+}
+
+// --- replay log -------------------------------------------------------------
+
+// mazeLogReader is the archive's read side.
+//
+// The bot's Store interface deliberately does not carry it: the bot only ever
+// writes the archive, and that interface is the consumer's view of what it needs
+// rather than everything a backend can do. The tests read back through the
+// concrete backend instead of widening production for their own benefit.
+type mazeLogReader interface {
+	MazeRoundLog(n int) ([]store.MazeRound, error)
+	MazeRoundEvents(id string) ([]store.MazeEvent, error)
+}
+
+func mazeLog(t *testing.T, st Store) mazeLogReader {
+	t.Helper()
+	rd, ok := st.(mazeLogReader)
+	if !ok {
+		t.Fatalf("%T cannot read the maze archive", st)
+	}
+	return rd
+}
+
+// TestMazeArchivesAFinishedRound is the round trip: play one out, then read it
+// back from the archive and check it describes the same game.
+func TestMazeArchivesAFinishedRound(t *testing.T) {
+	r, st, _, _, mr := startTestMaze(t)
+	r.econ.MazeReward = 100
+	seat(t, r, mr, "bob", "carol", "dave", "erin", "finn")
+	r.Handle(emsg("bob", "!left", false))
+	playMazeRound(t, r, mr)
+
+	rounds, err := mazeLog(t, st).MazeRoundLog(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rounds) != 1 {
+		t.Fatalf("%d archived rounds, want 1", len(rounds))
+	}
+	got := rounds[0]
+	if got.Seed != mr.round.Map.Seed {
+		t.Errorf("seed = %d want %d", got.Seed, mr.round.Map.Seed)
+	}
+	if got.Players != 5 {
+		t.Errorf("players = %d want 5", got.Players)
+	}
+	if want := len(mr.round.Placements()); got.Finishers != want {
+		t.Errorf("finishers = %d want %d", got.Finishers, want)
+	}
+	if got.Cycles != mr.round.Cycle {
+		t.Errorf("cycles = %d want %d", got.Cycles, mr.round.Cycle)
+	}
+	if got.Reason == "" || got.Reason == "skipped" {
+		t.Errorf("reason = %q, want the engine's own end reason", got.Reason)
+	}
+	if places := mr.round.Placements(); len(places) > 0 && got.WinnerLogin != places[0].Login {
+		t.Errorf("winner = %q want %q", got.WinnerLogin, places[0].Login)
+	}
+
+	// The replay document must actually be replayable: the board has to be in it,
+	// not merely a seed to rebuild one from.
+	var doc mazeReplay
+	if err := json.Unmarshal(got.Input, &doc); err != nil {
+		t.Fatalf("input is not a replay document: %v", err)
+	}
+	if len(doc.Initial.Board.Walls) != mr.round.Map.Size*mr.round.Map.Size {
+		t.Errorf("replay carries %d wall masks, want a whole board", len(doc.Initial.Board.Walls))
+	}
+	if len(doc.Moves) == 0 {
+		t.Error("replay carries no moves; the round cannot be re-run from it")
+	}
+	if _, err := maze.Restore(doc.Initial); err != nil {
+		t.Errorf("the archived board does not restore: %v", err)
+	}
+
+	evs, err := mazeLog(t, st).MazeRoundEvents(got.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) == 0 {
+		t.Fatal("no events archived")
+	}
+	for i, e := range evs {
+		if e.Seq != i {
+			t.Fatalf("event %d has seq %d — the log is not in emission order", i, e.Seq)
+		}
+		if e.Kind == "" {
+			t.Errorf("event %d has no kind: %+v", i, e)
+		}
+		// Round-level events have no board position, and must not have picked up
+		// the zero cell's "A1".
+		if (e.Kind == "seats-locked" || e.Kind == "round-ended") && e.At != "" {
+			t.Errorf("%s event carries a position %q", e.Kind, e.At)
+		}
+	}
+}
+
+// TestMazeArchivesASkippedRound: a moderator cutting a round short still happened,
+// and the engine never reaches PhaseDone on that path — so it has no end reason of
+// its own and would otherwise vanish entirely.
+func TestMazeArchivesASkippedRound(t *testing.T) {
+	r, st, _, _, mr := startTestMaze(t)
+	seat(t, r, mr, "bob", "carol")
+	for i := 0; i < 3; i++ {
+		r.Handle(emsg("bob", "!up", false))
+		cycle(r, mr)
+	}
+
+	r.Handle(emsg("chan", "!skipgame", true))
+
+	rounds, err := mazeLog(t, st).MazeRoundLog(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rounds) != 1 {
+		t.Fatalf("%d archived rounds after a skip, want 1", len(rounds))
+	}
+	if rounds[0].Reason != "skipped" {
+		t.Errorf("reason = %q want skipped", rounds[0].Reason)
+	}
+	if evs, _ := mazeLog(t, st).MazeRoundEvents(rounds[0].ID); len(evs) == 0 {
+		t.Error("a skipped round archived no events, losing everything that happened before the skip")
+	}
+}
+
+// TestMazeArchivesARoundThatEndedAsTheBotDied covers the end path that looks
+// least like one: the bot comes back up, finds a round already finished on disk,
+// and today would simply delete it.
+func TestMazeArchivesARoundThatEndedAsTheBotDied(t *testing.T) {
+	r, st, _, _, mr := startTestMaze(t)
+	seat(t, r, mr, "bob")
+	// Suppress the in-process archive, so the round reaches PhaseDone on disk
+	// having never been written — which is exactly the state a bot that died
+	// between the two leaves behind. `logged` is not persisted, so the restoring
+	// router sees a round it has never archived.
+	mr.logged = true
+	for mr.round.Phase != maze.PhaseDone {
+		cycle(r, mr)
+	}
+	r.persistMaze(mr)
+	if _, ok, _ := st.LoadRound(mazeGame); !ok {
+		t.Fatal("no stored round to restore")
+	}
+	if before, _ := mazeLog(t, st).MazeRoundLog(10); len(before) != 0 {
+		t.Fatalf("%d rounds archived already; this test needs an unarchived one", len(before))
+	}
+
+	r2 := newTestRouter(&fakeTTS{})
+	r2.store = st
+	r2.chat = &fakeChat{}
+	r2.overlay = &fakeOverlay{}
+	r2.loadMaze()
+
+	after, err := mazeLog(t, st).MazeRoundLog(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 1 {
+		t.Fatalf("%d archived rounds after restore, want 1 — a round that ended as the bot died was thrown away", len(after))
+	}
+	if r2.maze != nil {
+		t.Error("a finished round was resumed")
+	}
+}
+
+// TestMazeArchiveIsWrittenOnce: several paths end a round, and more than one can
+// reach the same one.
+func TestMazeArchiveIsWrittenOnce(t *testing.T) {
+	r, st, _, _, mr := startTestMaze(t)
+	seat(t, r, mr, "bob")
+	for mr.round.Phase != maze.PhaseDone {
+		cycle(r, mr)
+	}
+	r.archiveMaze(mr, "")
+	r.archiveMaze(mr, "skipped")
+
+	rounds, _ := mazeLog(t, st).MazeRoundLog(10)
+	if len(rounds) != 1 {
+		t.Fatalf("%d archived rounds, want 1", len(rounds))
+	}
+	if rounds[0].Reason == "skipped" {
+		t.Error("a second archive call overwrote the real end reason")
+	}
+}
+
+// TestMazeLogSurvivesARestart: the accumulating record rides in the round document
+// rather than in memory, so a bot that restarts mid-round still has the first half
+// of the game when it comes to archive it.
+func TestMazeLogSurvivesARestart(t *testing.T) {
+	r, st, _, _, mr := startTestMaze(t)
+	seat(t, r, mr, "bob", "carol")
+	for i := 0; i < 4; i++ {
+		r.Handle(emsg("bob", "!up", false))
+		r.Handle(emsg("carol", "!down", false))
+		cycle(r, mr)
+	}
+	wantEvents, wantMoves := len(mr.log), len(mr.moves)
+	if wantEvents == 0 || wantMoves == 0 {
+		t.Fatalf("nothing accumulated: %d events, %d moves", wantEvents, wantMoves)
+	}
+
+	r2 := newTestRouter(&fakeTTS{})
+	r2.store = st
+	r2.chat = &fakeChat{}
+	r2.overlay = &fakeOverlay{}
+	r2.loadMaze()
+	if r2.maze == nil {
+		t.Fatal("round not restored")
+	}
+	t.Cleanup(r2.maze.halt)
+	r2.maze.halt()
+
+	if got := len(r2.maze.log); got != wantEvents {
+		t.Errorf("%d events survived the restart, want %d", got, wantEvents)
+	}
+	if got := len(r2.maze.moves); got != wantMoves {
+		t.Errorf("%d moves survived the restart, want %d", got, wantMoves)
 	}
 }

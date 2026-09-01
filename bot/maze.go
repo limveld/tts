@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -29,6 +30,12 @@ import (
 type MazeWins interface {
 	MazeAddWin(userID, login, display string) (wins int, err error)
 	MazeLeaderboard(n int) ([]store.MazeWin, error)
+}
+
+// MazeLog is the replay-archive slice of the store (an interface so tests can
+// substitute a fake). *sqlite.Store and *postgres.Store satisfy it.
+type MazeLog interface {
+	MazeLogRound(r store.MazeRound, evs []store.MazeEvent) error
 }
 
 // mazeResultLinger is how long a settled board stays up before the stage is
@@ -107,6 +114,28 @@ type mazeRound struct {
 	// saidBounce stops a keyless player who keeps walking into the door from
 	// announcing it every cycle. The first time is a moment; the fourth is noise.
 	saidBounce map[int]bool
+
+	// log and moves are the permanent record: what happened, and the input that
+	// caused it. Unlike feed, these *are* persisted with the round — they ride in
+	// the document persistMaze already writes every cycle, so a bot that restarts
+	// mid-round still has the first half of the game when it comes to archive it.
+	log   []store.MazeEvent
+	moves []mazeSubmission
+	// logged guards against a second archive write. Several paths end a round and
+	// more than one can reach the same round; the store insert is idempotent too,
+	// but not making the call at all is cheaper than relying on that.
+	logged bool
+}
+
+// mazeSubmission is one player's move as it was accepted, which together with the
+// board is what makes a round replayable. The parsed direction is stored, not the
+// chat text: it is what the engine actually consumed, and the raw line is already
+// in chat_message for anyone who wants it.
+type mazeSubmission struct {
+	Cycle int    `json:"cycle"`
+	Seat  int    `json:"seat"`
+	Dir   string `json:"dir"`
+	At    int64  `json:"at"` // unix millis
 }
 
 // mazeFeedLines is how much play-by-play the panel keeps on screen.
@@ -225,7 +254,8 @@ func (r *Router) moveMaze(d maze.Dir, m ChatMessage) {
 		return
 	}
 
-	if _, seated := mr.round.PlayerBy(m.UserID); !seated {
+	seatOf, seated := mr.round.PlayerBy(m.UserID)
+	if !seated {
 		if _, ok := mr.round.Join(m.UserID, m.User, displayName(m)); !ok {
 			full := len(mr.round.Players) >= mr.round.Cfg.MaxSeats
 			r.mazeMu.Unlock()
@@ -248,7 +278,11 @@ func (r *Router) moveMaze(d maze.Dir, m ChatMessage) {
 	// messages carry no timestamp we can trust here, so this is arrival order at
 	// the bot — which is the IRC delivery order, since the reader is sequential,
 	// and is the same order Twitch itself put them in.
-	mr.round.Submit(m.UserID, d, time.Now())
+	at := time.Now()
+	mr.round.Submit(m.UserID, d, at)
+	mr.moves = append(mr.moves, mazeSubmission{
+		Cycle: mr.round.Cycle, Seat: seatOf.Seat, Dir: d.String(), At: at.UnixMilli(),
+	})
 	r.persistMaze(mr)
 	payload := r.mazePayload(mr)
 	r.mazeMu.Unlock()
@@ -300,6 +334,7 @@ func (r *Router) tickMaze(mr *mazeRound, now time.Time) bool {
 	}
 	evs := mr.round.Tick(now)
 	done := mr.round.Phase == maze.PhaseDone
+	mr.record(evs)
 	lines, endLine, toasts := mr.announce(evs)
 	r.persistMaze(mr)
 	payload := r.mazePayload(mr)
@@ -322,10 +357,98 @@ func (r *Router) tickMaze(mr *mazeRound, now time.Time) bool {
 		r.sendMaze(mr.roomID, endLine)
 	}
 	if done {
+		r.archiveMaze(mr, "")
 		r.scheduleMazeClear(mr)
 		return false
 	}
 	return true
+}
+
+// archiveMaze writes the permanent record of a finished round. Caller must not
+// hold mazeMu: this writes to the store.
+//
+// reason overrides the engine's own, and exists for one case: a moderator's
+// !skipgame ends a round without the engine ever reaching PhaseDone, so there is
+// no end reason to read. "skipped" is a documented extra value rather than a new
+// EndReason, because adding one would ripple through the wire maps and change how
+// every already-stored round decodes.
+//
+// It runs where the round ends rather than where it clears, so the archive is
+// written before anything is thrown away. By then no further cycles are due, so a
+// slow write delays nothing.
+func (r *Router) archiveMaze(mr *mazeRound, reason string) {
+	if r.store == nil {
+		return
+	}
+	r.mazeMu.Lock()
+	if mr.logged {
+		r.mazeMu.Unlock()
+		return
+	}
+	mr.logged = true
+	rec, evs := mr.archive(reason)
+	r.mazeMu.Unlock()
+
+	if err := r.store.MazeLogRound(rec, evs); err != nil {
+		r.logger.Printf("maze archive %s: %v", rec.ID, err)
+	}
+}
+
+// archive flattens the round for the log. Caller holds mazeMu.
+func (mr *mazeRound) archive(reason string) (store.MazeRound, []store.MazeEvent) {
+	st := mr.round.State()
+	if reason == "" {
+		reason = st.Reason
+	}
+	rec := store.MazeRound{
+		// Rounds cannot overlap — there is one board stage — so the start instant
+		// is already unique; the seed rides along because it can be pinned for a
+		// rematch, and a colliding id would silently drop the second round.
+		ID:        fmt.Sprintf("%d-%x", st.StartedAt, mr.round.Map.Seed),
+		RoomID:    mr.roomID,
+		Seed:      mr.round.Map.Seed,
+		StartedAt: st.StartedAt / 1000,
+		EndedAt:   time.Now().Unix(),
+		TickMS:    mr.cfg.Tick.Milliseconds(),
+		Cycles:    mr.round.Cycle,
+		Reason:    reason,
+		Players:   len(mr.round.Players),
+	}
+	for _, p := range mr.round.Placements() {
+		rec.Finishers++
+		if p.Place == 1 {
+			rec.WinnerID, rec.WinnerLogin, rec.WinnerDisplay = p.UserID, p.Login, p.Display
+		}
+	}
+	if doc, err := json.Marshal(mazeReplay{Initial: st, Gen: mr.cfg.Gen, Moves: mr.moves}); err == nil {
+		rec.Input = doc
+	} else {
+		rec.Input = []byte("{}")
+	}
+	// The round id is only known here — it is derived from the start instant and
+	// the seed — so the events are stamped with it now rather than at the point
+	// they were recorded.
+	evs := make([]store.MazeEvent, len(mr.log))
+	for i, e := range mr.log {
+		e.RoundID = rec.ID
+		evs[i] = e
+	}
+	return rec, evs
+}
+
+// mazeReplay is the document that makes a round re-runnable: the board and rules
+// it started under, plus every move in order. Restore it, replay the moves a cycle
+// at a time, and the engine — which contains no randomness at all — produces the
+// identical game.
+//
+// The board travels inside Initial rather than being regenerated from Seed. That
+// is the call internal/maze/persist.go already makes for restart-resume, and it
+// matters more here: an archive read back years and many redeploys later must not
+// depend on the generator still emitting byte-identical output.
+type mazeReplay struct {
+	Initial maze.RoundState  `json:"initial"`
+	Gen     maze.Config      `json:"gen"`
+	Moves   []mazeSubmission `json:"moves"`
 }
 
 // mazeFinish is one player getting through the door, copied out from under the
@@ -531,6 +654,27 @@ func (mr *mazeRound) announce(evs []maze.Event) (lines []string, end string, toa
 	return append(lines, bookends...), end, toasts
 }
 
+// record appends a cycle's events to the permanent log. Caller holds mazeMu.
+//
+// Kept separate from announce, which is named for narration and already does
+// enough: this is the archive, and the two want different things from the same
+// events. It denormalizes the player's name because the archive should carry the
+// name as it was at the time — people rename — and because users is written only
+// by the economy and is empty when that is switched off.
+func (mr *mazeRound) record(evs []maze.Event) {
+	for _, e := range evs {
+		kind, at, reason := e.Wire()
+		row := store.MazeEvent{
+			Seq: len(mr.log), Cycle: mr.round.Cycle,
+			Kind: kind, Seat: e.Seat, At: at, N: e.N, Reason: reason,
+		}
+		if p := mr.player(e.Seat); p != nil {
+			row.UserID, row.Login, row.Display = p.UserID, p.Login, p.Display
+		}
+		mr.log = append(mr.log, row)
+	}
+}
+
 // player is the seat's player, or nil for a round-level event.
 func (mr *mazeRound) player(seat int) *maze.Player {
 	if seat < 0 || seat >= len(mr.round.Players) {
@@ -693,6 +837,9 @@ func (r *Router) forceEndMaze() {
 
 	if mr != nil {
 		mr.halt()
+		// A skipped round still happened, so it is still archived — with its own
+		// reason, because the engine never reached PhaseDone and has none to give.
+		r.archiveMaze(mr, "skipped")
 	}
 	r.retireMaze()
 	if mr != nil {
@@ -709,6 +856,15 @@ type mazeRec struct {
 	TickMS  int64           `json:"tickMs"`
 	Display string          `json:"display"`
 	Round   maze.RoundState `json:"round"`
+
+	// The accumulating archive. Carried here rather than buffered in memory so a
+	// bot that restarts mid-round still has the first half of the game to log when
+	// it ends. Worst case this adds a few tens of KB to a document that is
+	// rewritten every cycle, which is nothing for either backend but is the reason
+	// the feed is deliberately *not* here — that one is narration, this one is the
+	// record.
+	Log   []store.MazeEvent `json:"log,omitempty"`
+	Moves []mazeSubmission  `json:"moves,omitempty"`
 }
 
 // persistMaze mirrors the round to the store. Caller holds mazeMu.
@@ -718,6 +874,8 @@ func (r *Router) persistMaze(mr *mazeRound) {
 		TickMS:  mr.cfg.Tick.Milliseconds(),
 		Display: mr.cfg.Display,
 		Round:   mr.round.State(),
+		Log:     mr.log,
+		Moves:   mr.moves,
 	}
 	r.saveRound(mazeGame, mr.roomID, mr.round.Deadline().UnixMilli(), rec)
 }
@@ -744,6 +902,19 @@ func (r *Router) loadMaze() {
 		return
 	}
 	if round.Phase == maze.PhaseDone {
+		// A round that finished in the instant the bot died. Its events are sitting
+		// in the stored document and would be thrown away here, so archive first —
+		// this is the easiest of the end paths to forget, because nothing about it
+		// looks like a round ending.
+		done := &mazeRound{
+			round: round, cfg: r.mazeConfig(), roomID: rec.RoomID,
+			stop: make(chan struct{}), saidBounce: map[int]bool{},
+			log: rec.Log, moves: rec.Moves,
+		}
+		if rec.TickMS > 0 {
+			done.cfg.Tick = time.Duration(rec.TickMS) * time.Millisecond
+		}
+		r.archiveMaze(done, "")
 		r.clearRound(mazeGame)
 		return
 	}
@@ -762,7 +933,11 @@ func (r *Router) loadMaze() {
 	}
 	cfg.Round = round.Cfg // the round plays by the rules it started under
 
-	mr := &mazeRound{round: round, cfg: cfg, roomID: rec.RoomID, stop: make(chan struct{}), saidBounce: map[int]bool{}}
+	mr := &mazeRound{
+		round: round, cfg: cfg, roomID: rec.RoomID,
+		stop: make(chan struct{}), saidBounce: map[int]bool{},
+		log: rec.Log, moves: rec.Moves,
+	}
 	// Assigning r.maze without mazeMu is safe only because loadMaze runs at
 	// startup, before the IRC loop and before any game timer exists. Don't move
 	// this call later without taking the lock.

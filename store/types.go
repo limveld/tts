@@ -46,6 +46,56 @@ type MazeWin struct {
 	Wins    int
 }
 
+// MazeRound is one finished Torch Maze round, kept permanently so a game can be
+// reviewed or replayed.
+//
+// Input is opaque here, exactly as Round.State is: the store carries the document
+// and never looks inside it. It holds the board, both configs and the ordered
+// submissions — everything needed to re-run the round. The columns beside it are
+// lifted out of that document so a round is legible in psql without decoding
+// anything, which is the same bargain game_rounds makes with room_id and ends_at.
+type MazeRound struct {
+	ID     string
+	RoomID string
+	Seed   int64
+
+	StartedAt int64 // unix seconds
+	EndedAt   int64
+	TickMS    int64
+	Cycles    int
+	Reason    string // an end-reason wire value, or "skipped"
+
+	Players   int
+	Finishers int
+
+	WinnerID      string // empty when nobody got out
+	WinnerLogin   string
+	WinnerDisplay string
+
+	Input []byte
+}
+
+// MazeEvent is one thing that happened during a round, in emission order.
+//
+// The player's name is denormalized rather than joined, following chat_message:
+// users is written only by the economy and is empty when that is off, and an
+// archive should carry the name as it was at the time regardless — people rename.
+type MazeEvent struct {
+	RoundID string
+	Seq     int // 0-based, across the whole round
+	Cycle   int
+
+	Kind    string
+	Seat    int // -1 for round-level events
+	UserID  string
+	Login   string
+	Display string
+
+	At     string // chat coordinate ("C4"); empty for kinds with no position
+	N      int    // meaning depends on Kind; see internal/maze/round.go
+	Reason string // set only by round-ended
+}
+
 // ChatMessage is one persisted line of chat.
 //
 // It is deliberately not the bot's ChatMessage. That one carries IRC parsing
