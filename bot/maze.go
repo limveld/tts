@@ -261,11 +261,32 @@ func (r *Router) startMaze(rest string, m ChatMessage) {
 	// will ever have came out as "0m".
 	joinWindow := time.Duration(cfg.Round.JoinCycles) * cfg.Tick
 	r.sendMaze(m.RoomID, fmt.Sprintf(
-		"🧭 Torch Maze! %.0fs to take a seat, %d spots — type !up !down !left !right. One move per turn, %.0fs a turn.",
+		"🧭 Torch Maze! %.0fs to take a seat, %d spots — type !up !down !left !right. One move per turn, %.0fs a turn. Same move twice? Say it differently: !go up or !gou.",
 		joinWindow.Seconds(), cfg.Round.MaxSeats, cfg.Tick.Seconds()))
 	if deniedFull {
 		r.reply(m, "full-screen is the channel owner's call — started in the corner instead.")
 	}
+}
+
+// goMaze handles "!go <direction>", the wordier spelling of the same move.
+//
+// Three ways to say each move — !up, !go up, !gou — is not indecision. Twitch
+// drops a message identical to the sender's previous one within thirty seconds,
+// and this game asks people to walk straight corridors, so a viewer going north
+// four times in a row would have three of those swallowed with no feedback
+// explaining why. Alternating spellings sidesteps it entirely. Moderators and the
+// broadcaster appear to be exempt, which is exactly why it took a report from
+// someone else to notice.
+func (r *Router) goMaze(rest string, m ChatMessage) {
+	if r.chat == nil {
+		return
+	}
+	d, ok := maze.ParseDir(strings.ToLower(strings.TrimSpace(rest)))
+	if !ok {
+		r.reply(m, "!go up / !go down / !go left / !go right — or just !up, or !gou.")
+		return
+	}
+	r.moveMaze(d, m)
 }
 
 // moveMaze handles !up / !down / !left / !right: it seats a chatter during the

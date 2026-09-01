@@ -70,10 +70,27 @@ func (r *Router) handleCommands(cmd, rest string, m ChatMessage) bool {
 	case "!maze":
 		r.startMaze(rest, m)
 		return true
-	// One command per direction. These replaced a single "!go <path>": a path let
-	// a player bank several cells from one message, and the message that took
-	// their seat banked one too, which is how a sprite ended up two cells from
-	// where its owner thought it was.
+	// Three spellings per direction: !up, !go up, !gou. Twitch drops a message
+	// identical to your previous one within thirty seconds, and walking a corridor
+	// means repeating yourself — so having another way to say it is the difference
+	// between a move landing and vanishing. What is *not* back is the old
+	// "!go <path>", which banked several cells from one message and made the
+	// command that took your seat move you as well.
+	case "!go":
+		r.goMaze(rest, m)
+		return true
+	case "!gou":
+		r.moveMaze(maze.North, m)
+		return true
+	case "!god":
+		r.moveMaze(maze.South, m)
+		return true
+	case "!gol":
+		r.moveMaze(maze.West, m)
+		return true
+	case "!gor":
+		r.moveMaze(maze.East, m)
+		return true
 	case "!up":
 		r.moveMaze(maze.North, m)
 		return true
@@ -330,7 +347,8 @@ func (r *Router) isReservedName(cmd string) bool {
 		"!addcom", "!editcom", "!delcom", "!commands", "!voices", "!don", "!r", "!so",
 		"!wordle", "!guess", "!wordlewins",
 		"!connections", "!conn", "!group", "!connectionswins", "!skipgame", "!reveal", "!shuffle",
-		"!maze", "!up", "!down", "!left", "!right", "!mazewins":
+		"!maze", "!up", "!down", "!left", "!right",
+		"!go", "!gou", "!god", "!gol", "!gor", "!mazewins":
 		return true
 	}
 	if r.info != nil && (cmd == "!uptime" || cmd == "!followage") {

@@ -644,15 +644,20 @@ func (r *Round) Placements() []*Player {
 
 // --- input parsing ----------------------------------------------------------
 
-func (d Dir) String() string {
-	switch d {
-	case North:
-		return "up"
-	case East:
-		return "right"
-	case South:
-		return "down"
-	default:
-		return "left"
+// dirNames is the one place a direction's word is written. String and ParseDir
+// are both built from it, so they cannot drift into disagreeing about what "left"
+// means — a round-trip test pins that.
+var dirNames = map[Dir]string{North: "up", East: "right", South: "down", West: "left"}
+
+func (d Dir) String() string { return dirNames[d] }
+
+// ParseDir reads a direction word. It is the inverse of String, and exists
+// because chat has several ways to say the same move.
+func ParseDir(s string) (Dir, bool) {
+	for d, name := range dirNames {
+		if name == s {
+			return d, true
+		}
 	}
+	return North, false
 }

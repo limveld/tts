@@ -812,3 +812,23 @@ func TestGreedyPlaythrough(t *testing.T) {
 	t.Logf("cycles to first win: p50=%d p90=%d max=%d (cap %d)", p50, p90, firstFinish[len(firstFinish)-1], cfg.MaxCycles)
 	t.Logf("end reasons: %v", reasons)
 }
+
+// TestDirWordsRoundTrip: chat says "left" and the archive stores "left", so the
+// word and its meaning have to be one fact rather than two that agree today.
+func TestDirWordsRoundTrip(t *testing.T) {
+	for _, d := range dirs {
+		got, ok := ParseDir(d.String())
+		if !ok {
+			t.Errorf("%v stringifies to %q, which does not parse back", d, d.String())
+			continue
+		}
+		if got != d {
+			t.Errorf("%v -> %q -> %v", d, d.String(), got)
+		}
+	}
+	for _, bad := range []string{"", "north", "w", "up ", "UP", "sideways"} {
+		if got, ok := ParseDir(bad); ok {
+			t.Errorf("ParseDir(%q) = %v, want a refusal", bad, got)
+		}
+	}
+}

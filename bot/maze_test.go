@@ -1589,3 +1589,90 @@ func TestMazeRoundIDsDifferBetweenRounds(t *testing.T) {
 		t.Errorf("both rounds are %q — the renderer cannot tell them apart", second)
 	}
 }
+
+// TestMazeEveryDirectionSpelling walks the whole alias table. Each direction has
+// three spellings so a player can alternate: Twitch drops a message identical to
+// their previous one inside thirty seconds, and this game asks people to walk
+// straight corridors, so repeating yourself is the normal case rather than an
+// edge one.
+func TestMazeEveryDirectionSpelling(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want maze.Dir
+	}{
+		{"!up", maze.North}, {"!go up", maze.North}, {"!gou", maze.North},
+		{"!down", maze.South}, {"!go down", maze.South}, {"!god", maze.South},
+		{"!left", maze.West}, {"!go left", maze.West}, {"!gol", maze.West},
+		{"!right", maze.East}, {"!go right", maze.East}, {"!gor", maze.East},
+	}
+	for _, c := range cases {
+		t.Run(c.cmd, func(t *testing.T) {
+			r, _, chat, _, mr := startTestMaze(t)
+			seat(t, r, mr, "bob")
+			chat.replies = nil
+
+			r.Handle(emsg("bob", c.cmd, false))
+
+			p, _ := mr.round.PlayerBy("id-bob")
+			got, ok := p.NextDir()
+			if !ok {
+				t.Fatalf("%q locked in nothing; replies=%v", c.cmd, chat.replies)
+			}
+			if got != c.want {
+				t.Errorf("%q = %v want %v", c.cmd, got, c.want)
+			}
+			if len(chat.replies) != 0 {
+				t.Errorf("%q spoke: %v", c.cmd, chat.replies)
+			}
+		})
+	}
+}
+
+// TestMazeAlternatingSpellingsAllLand is the point of the aliases: three messages
+// in a row that Twitch would see as different, all moving the same way.
+func TestMazeAlternatingSpellingsAllLand(t *testing.T) {
+	r, _, _, _, mr := startTestMaze(t)
+	seat(t, r, mr, "bob")
+	p, _ := mr.round.PlayerBy("id-bob")
+
+	start := p.At
+	for i, cmd := range []string{"!down", "!go down", "!god"} {
+		r.Handle(emsg("bob", cmd, false))
+		d, ok := p.NextDir()
+		if !ok || d != maze.South {
+			t.Fatalf("%q (%d) locked in %v/%v, want down", cmd, i, d, ok)
+		}
+		cycle(r, mr)
+	}
+	if p.At == start {
+		t.Error("three moves and the player never moved")
+	}
+}
+
+func TestMazeGoRejectsNonsense(t *testing.T) {
+	r, _, chat, _, mr := startTestMaze(t)
+	seat(t, r, mr, "bob")
+	chat.replies = nil
+
+	for _, bad := range []string{"!go", "!go sideways", "!go w", "!go north"} {
+		r.Handle(emsg("bob", bad, false))
+	}
+	if len(chat.replies) != 4 {
+		t.Fatalf("%d replies for 4 bad arguments, want 4: %v", len(chat.replies), chat.replies)
+	}
+	if !strings.Contains(chat.replies[0].text, "!gou") {
+		t.Errorf("usage reply %q should name the short forms too", chat.replies[0].text)
+	}
+	if p, _ := mr.round.PlayerBy("id-bob"); p.Queued() != 0 {
+		t.Error("an unparseable direction still locked a move in")
+	}
+}
+
+func TestMazeAliasesAreReserved(t *testing.T) {
+	r, _, _, _ := econRouter(t)
+	for _, cmd := range []string{"!go", "!gou", "!god", "!gol", "!gor"} {
+		if !r.isBuiltin(cmd) {
+			t.Errorf("%s is not reserved; !addcom could shadow it", cmd)
+		}
+	}
+}

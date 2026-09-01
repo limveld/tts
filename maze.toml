@@ -2,6 +2,13 @@
 # short of the field. Open a round with !maze, play with !up !down !left !right,
 # see the leaderboard with !mazewins. A mod can !skipgame.
 #
+# Each direction has three spellings — !up, !go up, !gou — and that is on purpose.
+# Twitch drops a message identical to your previous one within 30 seconds, and
+# walking a straight corridor means repeating yourself, so a player going the same
+# way twice needs another way to say it or the second move silently vanishes.
+# Moderators and the broadcaster appear to be exempt, so testing this yourself will
+# not show you the problem.
+#
 # !maze opens the board in the corner panel. "!maze full" puts it on the whole
 # stage and is the channel owner's command alone — it covers whatever else is on
 # screen for several minutes.
@@ -137,12 +144,8 @@
 # There used to be a "!go <path>" that banked several cells from one message. It
 # was removed after a live round: the message that took your seat banked a move
 # too, so your first command moved you a cell you had not asked for and you spent
-# the rest of the round one step from where you thought you were.
-#
-# Watch for one consequence. Twitch drops a message identical to your previous one
-# within 30 seconds, and walking a straight corridor now means sending the same
-# command twice. Moderators and the broadcaster appear to be exempt, so testing it
-# yourself will not tell you — if viewers report moves going missing, that is this.
+# the rest of the round one step from where you thought you were. "!go up" is back
+# as a plain alias for one move; the path form is not.
 
 # How a bare !maze draws the board. "panel" tucks it into the same corner the
 # other games use; "full" claims the stage. Panel is the default because the maze
