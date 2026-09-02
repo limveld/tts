@@ -191,7 +191,7 @@ func DefaultRoundConfig() RoundConfig {
 		// against pauses and desync, not a second round limit, and a value below
 		// that product silently truncates every round — bot/maze_config.go
 		// cross-checks the two for exactly that reason.
-		MaxSeconds:        660,
+		MaxSeconds:        720,
 		PlacementCycles:   12,
 		KeyDeficit:        1,
 		DeficitMinPlayers: 3,
@@ -629,6 +629,13 @@ func (r *Round) PlayerBy(userID string) (*Player, bool) {
 func (r *Round) Deadline() time.Time {
 	return r.startedAt.Add(time.Duration(r.Cfg.MaxSeconds) * time.Second)
 }
+
+// EndAtCycle is the cycle the placement window closes on, or 0 while nobody has
+// finished yet. It is not the same thing as MaxCycles: once somebody escapes,
+// the round ends PlacementCycles later and the cycle cap stops being the limit
+// that binds. The overlay needs it to count the scramble down rather than count
+// toward a cap the round will never reach.
+func (r *Round) EndAtCycle() int { return r.endAtCycle }
 
 // Placements lists everyone who finished, in finishing order.
 func (r *Round) Placements() []*Player {
