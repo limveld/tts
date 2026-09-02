@@ -78,6 +78,16 @@ run = "go run ./cmd/sfx-fetch"
 description = "Download the latest NYT Connections puzzle corpus to connections.json (restart the bot to apply)"
 run = "go run ./cmd/connections-fetch"
 
+# ---- get out!!! -------------------------------------------------------------
+
+[tasks."maze:rounds"]
+description = "List archived GET OUT!!! rounds, newest first"
+run = 'go run ./cmd/maze-replay -list'
+
+[tasks."maze:replay"]
+description = 'Re-run an archived round through the overlay: mise run maze:replay -- -last -speed 4'
+run = 'go run ./cmd/maze-replay'
+
 # ---- bot -------------------------------------------------------------------
 
 [tasks."bot:build"]
