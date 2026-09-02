@@ -2,6 +2,12 @@
 
 Status: ready-for-agent
 
+> **Renamed.** The game shipped as **GET OUT!!!**, started with `!getout`
+> (`!maze` still works). This document keeps its original name because it is a
+> record of the design as it was decided; the code, config and overlay carry the
+> new one. Internal identifiers, the store tables and the `maze_*` archive schema
+> are still `maze` and deliberately were not renamed.
+
 A chat-driven, tick-based maze race for the stream overlay. Up to 5 chatters each
 drive their own sprite through a fogged 6x6 maze, scrambling for scarce keys and
 racing to a locked exit while hidden traps fire once and clear.
@@ -276,6 +282,23 @@ So the deficit applies only at N >= `deficit_min_players`:
 Giving 5->4, 4->3, 3->2, 2->2, 1->1.
 
 ### 14. Two spikes, one bear trap, stuck 2 cycles.
+
+**Superseded by play: the shipping mix is three spikes and five bear traps.** The
+reasoning below is kept because it is still the right frame — the mix is the
+comeback dial, and the asymmetry between the two hazards is real — but the numbers
+it picked were chosen before anyone had played a round, and both were too low.
+
+One bear trap on a 36-cell board is one that most rounds never meet, so the
+gentler hazard effectively did not exist. Two spikes over a round that runs about
+25 turns tended to resolve the key shortfall early and then leave it resolved,
+which is the opposite of what decision 13's deficit is for. Traps despawn on
+firing, so the count is a budget for the whole round rather than a standing
+hazard: eight is roughly one per three turns, across the twelve to fifteen cells
+that traffic actually crosses.
+
+The thing to watch, and the reason to raise bear traps rather than `bear_trap_cycles`:
+five traps at two cycles is up to ten player-turns of standing still per round, and
+a frozen player is one with nothing to type.
 
 `traps: 3` never said the mix, and the mix is the comeback dial: spikes are the
 only mechanism returning a key to the board, so spike density *is* the rate at

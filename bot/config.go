@@ -41,7 +41,7 @@ type Config struct {
 	Notifications        NotificationsConfig // shoutouts + ad reminder (notifications.toml)
 	NotificationsEnabled bool                // notifications.toml present → run the events loop
 
-	// Maze carries the Torch Maze's rules (maze.toml). There is no companion
+	// Maze carries GET OUT!!!'s rules (maze.toml). There is no companion
 	// Enabled flag: unlike sfx or the economy, the game works unconfigured, so a
 	// missing file means defaults rather than a feature switched off.
 	Maze mazeConfig
@@ -81,7 +81,7 @@ func LoadConfig(args []string) (Config, error) {
 	var notifyPath string
 	fs.StringVar(&notifyPath, "notifications-config", "notifications.toml", "notifications TOML (shoutout allow-list + ad reminder); optional")
 	var mazePath string
-	fs.StringVar(&mazePath, "maze-config", "maze.toml", "Torch Maze rules TOML; optional (absent = built-in defaults)")
+	fs.StringVar(&mazePath, "maze-config", "maze.toml", "GET OUT!!! rules TOML; optional (absent = built-in defaults)")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -142,7 +142,7 @@ func LoadConfig(args []string) (Config, error) {
 	}
 	c.Notifications, c.NotificationsEnabled = notify, notifyEnabled
 
-	// Torch Maze rules. A missing file is defaults, not "off" — but a file that
+	// GET OUT!!! rules. A missing file is defaults, not "off" — but a file that
 	// is present and wrong is fatal, so a typo shows up at startup rather than as
 	// a !maze that refuses to run mid-stream.
 	if c.Maze, err = LoadMazeConfig(mazePath); err != nil {

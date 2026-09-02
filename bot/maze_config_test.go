@@ -112,9 +112,31 @@ seed             = 0
 // TestMazeConfigAcceptsAGuardThatIsExactlyLongEnough pins the boundary, so the
 // cross-check cannot drift into rejecting a config that is in fact fine.
 func TestMazeConfigAcceptsAGuardThatIsExactlyLongEnough(t *testing.T) {
-	p := writeMazeToml(t, "tick_seconds = 10\nmax_cycles = 60\njoin_cycles = 2\nmax_seconds = 620\n")
+	p := writeMazeToml(t, "tick_seconds = 10\nmax_cycles = 60\njoin_cycles = 2\nmax_seconds = 682\n")
 	if _, err := LoadMazeConfig(p); err != nil {
-		t.Errorf("620s is exactly (2+60)x10 and should be accepted: %v", err)
+		t.Errorf("682s is exactly (2+60)x11 and should be accepted: %v", err)
+	}
+}
+
+// TestMazeConfigGuardCountsTheResolveBeat: the beat is wall clock the guard has to
+// pay for too. Counting only tick_seconds would under-count by a second a cycle —
+// the same silent early ending the cross-check exists to prevent, in a smaller
+// dose that would be far harder to notice.
+func TestMazeConfigGuardCountsTheResolveBeat(t *testing.T) {
+	// 620 is exactly (2+60)x10 — long enough if the beat were free, and it is not.
+	p := writeMazeToml(t, "tick_seconds = 10\nmax_cycles = 60\njoin_cycles = 2\nmax_seconds = 620\n")
+	_, err := LoadMazeConfig(p)
+	if err == nil {
+		t.Fatal("620s ignores the resolve beat and should have been rejected")
+	}
+	if !strings.Contains(err.Error(), "682") {
+		t.Errorf("error should name the 682s a cycle period of 11s needs: %v", err)
+	}
+
+	// With no beat configured, the old arithmetic is the right arithmetic again.
+	p = writeMazeToml(t, "tick_seconds = 10\nmax_cycles = 60\njoin_cycles = 2\nmax_seconds = 620\nresolve_seconds = 0\n")
+	if _, err := LoadMazeConfig(p); err != nil {
+		t.Errorf("without a resolve beat 620s is exactly (2+60)x10: %v", err)
 	}
 }
 

@@ -38,7 +38,7 @@ type EconomyConfig struct {
 	ConnectionsGroupReward int64
 	ConnectionsSolveBonus  int64
 	ConnectionsDuration    time.Duration // how long a Connections round runs before it auto-ends
-	// Torch Maze pays on a halving curve from the winner down, so finishing at
+	// GET OUT!!! pays on a halving curve from the winner down, so finishing at
 	// all beats not finishing — which is what gives the placement scramble after
 	// the win a reason to exist. Round length lives in maze.toml, not here.
 	MazeReward int64

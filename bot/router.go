@@ -59,7 +59,7 @@ type Router struct {
 	wordle   *wordleState // the active Wordle round, or nil when idle
 
 	mazeMu  sync.Mutex // guards maze (mutated by handler + the cycle ticker)
-	maze    *mazeRound // the active Torch Maze round, or nil when idle
+	maze    *mazeRound // the active GET OUT!!! round, or nil when idle
 	mazeCfg mazeConfig // maze tuning; zero means defaultMazeConfig()
 	// mazeChat carries the game's chat lines to a single sender goroutine, so a
 	// slow Helix call cannot delay a cycle. See bot/mazechat.go.

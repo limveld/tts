@@ -67,7 +67,9 @@ func (r *Router) handleCommands(cmd, rest string, m ChatMessage) bool {
 	case "!connectionswins":
 		r.showConnectionsWins(m)
 		return true
-	case "!maze":
+	// !getout is the game's name; !maze is what it was called first and what
+	// regulars still type. Both take the same modifier, so "!getout full" works.
+	case "!maze", "!getout":
 		r.startMaze(rest, m)
 		return true
 	// Three spellings per direction: !up, !go up, !gou. Twitch drops a message
@@ -278,7 +280,7 @@ func (r *Router) listCommands(m ChatMessage) {
 	// become useful.
 	cmds := []string{r.cmds.TTSPrefix, r.cmds.SFX, "!voices", "!wordle", "!guess", "!wordlewins",
 		"!connections", "!group", "!connectionswins",
-		"!maze", "!up", "!down", "!left", "!right", "!mazewins"}
+		"!getout", "!up", "!down", "!left", "!right", "!mazewins"}
 	if r.economy {
 		cmds = append(cmds, "!marks", "!leaderboard", "!g", "!give")
 	}
@@ -354,7 +356,7 @@ func (r *Router) isReservedName(cmd string) bool {
 		"!addcom", "!editcom", "!delcom", "!commands", "!voices", "!don", "!r", "!so",
 		"!wordle", "!guess", "!wordlewins",
 		"!connections", "!conn", "!group", "!connectionswins", "!skipgame", "!reveal", "!shuffle",
-		"!maze", "!up", "!down", "!left", "!right",
+		"!maze", "!getout", "!up", "!down", "!left", "!right",
 		"!go", "!gou", "!god", "!gol", "!gor", "!mazewins":
 		return true
 	}

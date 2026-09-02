@@ -1,6 +1,6 @@
-# Torch Maze: up to five chatters race a fogged 6x6 maze for keys that are one
-# short of the field. Open a round with !maze, play with !up !down !left !right,
-# see the leaderboard with !mazewins. A mod can !skipgame.
+# GET OUT!!!: up to five chatters race a fogged 6x6 maze for keys that are one
+# short of the field. Open a round with !getout (or !maze), play with
+# !up !down !left !right, see the leaderboard with !mazewins. A mod can !skipgame.
 #
 # Each direction has three spellings — !up, !go up, !gou — and that is on purpose.
 # Twitch drops a message identical to your previous one within 30 seconds, and
@@ -9,9 +9,9 @@
 # Moderators and the broadcaster appear to be exempt, so testing this yourself will
 # not show you the problem.
 #
-# !maze opens the board in the corner panel. "!maze full" puts it on the whole
+# !getout opens the board in the corner panel. "!getout full" puts it on the whole
 # stage and is the channel owner's command alone — it covers whatever else is on
-# screen for several minutes.
+# screen for several minutes. !maze is the old name and still works everywhere.
 #
 # EVERY SETTING BELOW IS COMMENTED OUT AND SHOWS ITS BUILT-IN DEFAULT.
 #
@@ -42,7 +42,28 @@
 # transport. 8 seconds fits the loop inside a single cycle.
 #
 # Measure your own OBS-to-viewer delay once and set this from it.
+#
+# This is the *input window* — the countdown players read. A cycle is this plus
+# resolve_seconds below.
 # tick_seconds = 10
+
+# The beat between turns, in seconds. Dead time at the start of every cycle,
+# straight after the tick that resolved the previous one: the board is already
+# showing the new positions and this is where the runners visibly move into them.
+#
+# It is at the start rather than the end on purpose. By the time anyone can type,
+# the resolution they are reacting to has already happened, so a command sent
+# during the beat belongs to the next turn and cannot be banked against one that is
+# about to resolve — which is the shape of the bug that used to make joining a
+# round also move you.
+#
+# The countdown holds full while it runs, then counts tick_seconds down to zero,
+# so players see a clean whole turn to decide in rather than one that starts with
+# the board still settling. Must be shorter than tick_seconds.
+#
+# Set it to 0 for the old behaviour: cycles resolve back to back and the movement
+# animation plays over the first moments of the next turn.
+# resolve_seconds = 1
 
 # Round length. Both are checked; whichever trips first ends the round.
 # max_cycles is the real limit and max_seconds is a wall-clock guard against
@@ -51,11 +72,13 @@
 #
 # The two are checked against each other at startup, and the bot refuses to run if
 # the guard is too tight. Join ticks burn wall clock without advancing the cycle
-# counter, so cycle N lands at (join_cycles + N) x tick_seconds — 620s here. Set
-# max_seconds below that and the guard silently ends every round early, with the
-# overlay still counting up toward a cycle cap it will never reach.
+# counter, so cycle N lands at (join_cycles + N) x the cycle period — and the
+# period is tick_seconds + resolve_seconds, because the beat is wall clock too.
+# At the defaults that is 62 x 11 = 682s. Set max_seconds below that and the guard
+# silently ends every round early, with the overlay still counting up toward a
+# cycle cap it will never reach.
 # max_cycles  = 60
-# max_seconds = 660
+# max_seconds = 720
 
 # The frozen window at the top of a round, in cycles: the board is up, seats are
 # filling, nothing moves. It exists because the key count depends on how many
@@ -123,18 +146,33 @@
 # ---- traps -------------------------------------------------------------------
 
 # Both kinds are hidden until sprung, fire once, and then despawn — so the first
-# player through clears the way for everyone behind them.
+# player through clears the way for everyone behind them, and the count is a
+# budget for the whole round rather than a standing hazard.
 #
 # Spikes fling you back to the start and drop any key you were carrying, which
 # makes spike density the rate at which a locked-out player gets back into
 # contention: it is the only way a key ever returns to the board. They are also
 # an order of magnitude harsher than a bear trap, and self-scaling — being flung
 # home early costs almost nothing, late it is most of your round.
-# spikes    = 2
-# bear_traps = 1
+#
+# These were 2 and 1, chosen before anyone had played it and raised after several
+# rounds were. One bear trap on a 36-cell board is one most rounds never meet, so
+# the gentler hazard effectively did not exist; and two spikes over a ~25-turn
+# round tended to settle the shortfall early and leave it settled. Eight traps is
+# about one per three turns, spread over the twelve to fifteen cells traffic
+# actually crosses.
+#
+# If you turn these back down, turn spikes down last: it is the one that decides
+# whether a locked-out player has anything to hope for.
+# spikes     = 3
+# bear_traps = 5
 
 # Cycles a bear trap holds you. Your key stays with you while you are stuck.
 # At 10 seconds a cycle, 3 is half a minute of sitting still.
+#
+# Worth doing the sum before raising this alongside bear_traps: five traps at two
+# cycles is ten player-turns of standing still per round if they all catch someone,
+# and a player frozen is a player with nothing to type.
 # bear_trap_cycles = 2
 
 # ---- input and display -------------------------------------------------------

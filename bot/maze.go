@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"tts/internal/maze"
+	"tts/internal/mazearchive"
+	"tts/internal/mazeview"
 	"tts/store"
 )
 
-// Torch Maze, bot-owned. Up to five chatters each drive a sprite through a
+// GET OUT!!!, bot-owned. Up to five chatters each drive a sprite through a
 // fogged maze on a global cycle, scrambling for keys that are deliberately one
 // short of the field and racing a locked exit. The rules and the board live in
 // internal/maze, which knows nothing about chat; this file is the seam — it owns
@@ -38,26 +40,6 @@ type MazeLog interface {
 	MazeLogRound(r store.MazeRound, evs []store.MazeEvent) error
 }
 
-// mazeSeats is the seat palette: the colour a runner is drawn in, and the emoji
-// chat is told to look for.
-//
-// Both halves live here, together, because they are one fact. The overlay used to
-// own the hex and chat would have owned the emoji, which is two copies of the same
-// palette that can disagree — and when they disagree the roster does not look
-// wrong, it just quietly sends a player hunting for somebody else's dot. The
-// renderer now takes the colour from the payload, so there is nothing to keep in
-// step.
-var mazeSeats = []struct {
-	Hex   string
-	Emoji string
-}{
-	{"#e6482e", "🔴"},
-	{"#4fa4ff", "🔵"},
-	{"#3fbf5f", "🟢"},
-	{"#e8c547", "🟡"},
-	{"#b96fe0", "🟣"},
-}
-
 // id names this round, for the archive and for the overlay.
 //
 // Rounds cannot overlap — there is one board stage — so the start instant is
@@ -71,13 +53,6 @@ func (mr *mazeRound) id() string {
 	return fmt.Sprintf("%d-%x", mr.round.State().StartedAt, mr.round.Map.Seed)
 }
 
-// mazeSeat is seat n's colour, wrapping round if there are ever more seats than
-// colours.
-func mazeSeat(n int) (hex, emoji string) {
-	s := mazeSeats[((n%len(mazeSeats))+len(mazeSeats))%len(mazeSeats)]
-	return s.Hex, s.Emoji
-}
-
 // mazeResultLinger is how long a settled board stays up before the stage is
 // freed — long enough to read the placements off the overlay.
 const mazeResultLinger = 15 * time.Second
@@ -86,8 +61,17 @@ const mazeResultLinger = 15 * time.Second
 // are what ships; issue 09 replaces that with maze.toml, which is why this is a
 // struct rather than a handful of constants.
 type mazeConfig struct {
-	Tick    time.Duration // cycle length; the single most important pacing knob
+	Tick    time.Duration // the input window: how long players have to choose
 	Display string        // "panel" | "full" — how the overlay renders the board
+	// ResolveBuffer is dead time at the *start* of every cycle, immediately after
+	// the tick that resolved the previous one. The board is already showing the
+	// new positions; this is the beat in which the runners visibly move into them.
+	//
+	// It sits at the start rather than the end deliberately. By the time anyone can
+	// type, the resolution they are reacting to has happened, so input during the
+	// buffer belongs to the next tick and nothing can be banked against a turn that
+	// is about to resolve — which is the bug that made joining also move you.
+	ResolveBuffer time.Duration
 	// Seed fixes the board. Zero draws a fresh one per round, which is what a
 	// stream wants; setting it replays one exact maze, for a rematch or for
 	// reproducing something that went wrong.
@@ -109,8 +93,9 @@ type mazeConfig struct {
 func defaultMazeConfig() mazeConfig {
 	round := maze.DefaultRoundConfig()
 	return mazeConfig{
-		Tick:    10 * time.Second,
-		Display: "panel",
+		Tick:          10 * time.Second,
+		ResolveBuffer: time.Second,
+		Display:       "panel",
 		Gen: maze.Config{
 			Size:      6,
 			LoopWalls: 4,
@@ -118,12 +103,32 @@ func defaultMazeConfig() mazeConfig {
 			Keys:       mazeKeySlots(round.MaxSeats),
 			KeyBandMin: 4,
 			KeyBandMax: 6,
-			Spikes:     2,
-			BearTraps:  1,
+			// Eight traps on a 36-cell board, and the mix is the comeback dial.
+			//
+			// This shipped as 2 spikes and 1 bear trap, reasoned about before anyone
+			// had played it: spikes are the only way a key returns to the board, so
+			// spike density is the rate at which a locked-out player gets back into
+			// contention, and a bear trap was treated as the mild one to be used
+			// sparingly. Play disagreed. A single bear trap on a board this size is
+			// one most rounds never meet, so the mechanic barely existed, and two
+			// spikes over a ~25-turn round left the shortfall resolving early and
+			// then standing.
+			//
+			// Traps despawn on firing, so density is a budget for the round rather
+			// than a standing hazard: the first player through clears each one for
+			// everyone behind. Eight is roughly one trap per three turns of a typical
+			// round, spread over the ~12-15 cells traffic actually crosses.
+			Spikes:    3,
+			BearTraps: 5,
 		},
 		Round: round,
 	}
 }
+
+// cyclePeriod is how often a cycle actually resolves: the input window plus the
+// beat after it in which the movement is drawn. Everything that schedules or
+// measures a cycle uses this; Tick alone is only ever the countdown players read.
+func (c mazeConfig) cyclePeriod() time.Duration { return c.Tick + c.ResolveBuffer }
 
 // mazeConfig returns the configured tuning, falling back to the shipping
 // defaults when nothing has been loaded. Router holds it so maze.toml has
@@ -155,31 +160,45 @@ type mazeRound struct {
 	// announcing it every cycle. The first time is a moment; the fourth is noise.
 	saidBounce map[int]bool
 
+	// cycleEndsAt is when the current cycle resolves. It exists so the overlay can
+	// be told how much of the turn is actually left, rather than inferring it from
+	// the tick length at the moment a payload happens to arrive: the bot pushes on
+	// every move as well as every cycle, and the page restarted its countdown on
+	// each one, so the bar refilled every time somebody typed and never reached
+	// zero. The turn looked like it was being skipped with time still on it.
+	cycleEndsAt time.Time
+
+	// joined buffers the seats taken since the last cycle so they go out as one
+	// line. Answering each !up on its own would be five bot messages inside the
+	// join window in a chat with fewer than ten people in it; saying nothing at
+	// all, which is what it used to do, leaves a first-timer with no evidence for
+	// twenty seconds that they are in the round.
+	joined []int
+	// saidRepeatHint and saidLastKey each gate a line that is worth saying once
+	// and grating said twice, the way saidBounce does.
+	saidRepeatHint bool
+	saidLastKey    bool
+
+	// opening is the round exactly as it began, kept for the archive.
+	//
+	// It has to be captured rather than derived, because the state the round is in
+	// when it ends is not reversible: fog has been lifted, traps are spent, keys are
+	// gone and everybody is placed. The archive stored that end state under the name
+	// "initial" for a while, so a replay built on it restored a finished round and
+	// played no game at all — silently, since nothing about a done round errors.
+	opening maze.RoundState
+
 	// log and moves are the permanent record: what happened, and the input that
 	// caused it. Unlike feed, these *are* persisted with the round — they ride in
 	// the document persistMaze already writes every cycle, so a bot that restarts
 	// mid-round still has the first half of the game when it comes to archive it.
 	log   []store.MazeEvent
-	moves []mazeSubmission
+	moves []mazearchive.Submission
 	// logged guards against a second archive write. Several paths end a round and
 	// more than one can reach the same round; the store insert is idempotent too,
 	// but not making the call at all is cheaper than relying on that.
 	logged bool
 }
-
-// mazeSubmission is one player's move as it was accepted, which together with the
-// board is what makes a round replayable. The parsed direction is stored, not the
-// chat text: it is what the engine actually consumed, and the raw line is already
-// in chat_message for anyone who wants it.
-type mazeSubmission struct {
-	Cycle int    `json:"cycle"`
-	Seat  int    `json:"seat"`
-	Dir   string `json:"dir"`
-	At    int64  `json:"at"` // unix millis
-}
-
-// mazeFeedLines is how much play-by-play the panel keeps on screen.
-const mazeFeedLines = 5
 
 // halt stops the round's cycle ticker. It is idempotent so that force-ending a
 // round can never race a second force-end into a double close, and so tests can
@@ -238,7 +257,7 @@ func (r *Router) startMaze(rest string, m ChatMessage) {
 	r.mazeMu.Lock()
 	if r.maze != nil {
 		r.mazeMu.Unlock()
-		r.reply(m, "🧭 a maze round is already going — !up !down !left !right to play.")
+		r.reply(m, "🧭 a GET OUT!!! round is already going — !up !down !left !right to play.")
 		return
 	}
 	mr := &mazeRound{
@@ -247,7 +266,13 @@ func (r *Router) startMaze(rest string, m ChatMessage) {
 		roomID:     m.RoomID,
 		stop:       make(chan struct{}),
 		saidBounce: map[int]bool{},
+		// runMaze's ticker starts a beat after this, which is close enough: the
+		// alternative is a zero value that reads as a cycle already over.
+		cycleEndsAt: time.Now().Add(cfg.cyclePeriod()),
 	}
+	// Before anyone joins and before the first tick: this is the only moment the
+	// opening state exists to be taken.
+	mr.opening = mr.round.State()
 	r.maze = mr
 	r.persistMaze(mr)
 	payload := r.mazePayload(mr)
@@ -259,10 +284,17 @@ func (r *Router) startMaze(rest string, m ChatMessage) {
 	// Seconds, spelled out here rather than through shortDuration: that rounds to
 	// the nearest minute for uptime and follow-age, so every join window this game
 	// will ever have came out as "0m".
-	joinWindow := time.Duration(cfg.Round.JoinCycles) * cfg.Tick
+	joinWindow := time.Duration(cfg.Round.JoinCycles) * cfg.cyclePeriod()
+	// One thing to do, and where to read the rest. This line used to carry the
+	// seat count, every movement spelling, the cycle length and the duplicate-move
+	// workaround in one 155-character breath, which wraps to four lines in chat and
+	// buries the only sentence that needs acting on. The cycle length is on screen
+	// as a countdown, the workaround now rides the join line — where it reaches
+	// people who are about to move — and !mazehelp has held the full rules all
+	// along without anything ever pointing at it.
 	r.sendMaze(m.RoomID, fmt.Sprintf(
-		"🧭 Torch Maze! %.0fs to take a seat, %d spots — type !up !down !left !right. One move per turn, %.0fs a turn. Same move twice? Say it differently: !go up or !gou.",
-		joinWindow.Seconds(), cfg.Round.MaxSeats, cfg.Tick.Seconds()))
+		"🧭 GET OUT!!! Type !up to grab one of %d seats — %.0fs. !mazehelp for how it works.",
+		cfg.Round.MaxSeats, joinWindow.Seconds()))
 	if deniedFull {
 		r.reply(m, "full-screen is the channel owner's call — started in the corner instead.")
 	}
@@ -311,13 +343,14 @@ func (r *Router) moveMaze(d maze.Dir, m ChatMessage) {
 	mr := r.maze
 	if mr == nil || mr.round.Phase == maze.PhaseDone {
 		r.mazeMu.Unlock()
-		r.reply(m, "no maze round right now — !maze to start one.")
+		r.reply(m, "no round right now — !getout to start one.")
 		return
 	}
 
 	seatOf, seated := mr.round.PlayerBy(m.UserID)
 	if !seated {
-		if _, ok := mr.round.Join(m.UserID, m.User, displayName(m)); !ok {
+		seat, joinedNow := mr.round.Join(m.UserID, m.User, displayName(m))
+		if !joinedNow {
 			full := len(mr.round.Players) >= mr.round.Cfg.MaxSeats
 			r.mazeMu.Unlock()
 			if full {
@@ -328,6 +361,7 @@ func (r *Router) moveMaze(d maze.Dir, m ChatMessage) {
 			return
 		}
 		// Seated by this command, and that is all it does.
+		mr.joined = append(mr.joined, seat)
 		r.persistMaze(mr)
 		payload := r.mazePayload(mr)
 		r.mazeMu.Unlock()
@@ -341,7 +375,7 @@ func (r *Router) moveMaze(d maze.Dir, m ChatMessage) {
 	// and is the same order Twitch itself put them in.
 	at := time.Now()
 	mr.round.Submit(m.UserID, d, at)
-	mr.moves = append(mr.moves, mazeSubmission{
+	mr.moves = append(mr.moves, mazearchive.Submission{
 		Cycle: mr.round.Cycle, Seat: seatOf.Seat, Dir: d.String(), At: at.UnixMilli(),
 	})
 	r.persistMaze(mr)
@@ -358,7 +392,7 @@ func (r *Router) moveMaze(d maze.Dir, m ChatMessage) {
 
 // runMaze drives one round's cycles until it ends or is superseded.
 func (r *Router) runMaze(mr *mazeRound) {
-	t := time.NewTicker(mr.cfg.Tick)
+	t := time.NewTicker(mr.cfg.cyclePeriod())
 	defer t.Stop()
 	for {
 		select {
@@ -394,9 +428,15 @@ func (r *Router) tickMaze(mr *mazeRound, now time.Time) bool {
 		return false
 	}
 	evs := mr.round.Tick(now)
+	mr.cycleEndsAt = now.Add(mr.cfg.cyclePeriod())
 	done := mr.round.Phase == maze.PhaseDone
 	mr.record(evs)
 	lines, endLine, toasts := mr.announce(evs)
+	// Ahead of everything announce produced, so that on the cycle the window
+	// closes the roll-call is still the last thing said.
+	if joinLine, ok := mr.flushJoins(); ok {
+		lines = append([]string{joinLine}, lines...)
+	}
 	r.persistMaze(mr)
 	payload := r.mazePayload(mr)
 	finished := mr.finishers(evs)
@@ -478,7 +518,17 @@ func (mr *mazeRound) archive(reason string) (store.MazeRound, []store.MazeEvent)
 			rec.WinnerID, rec.WinnerLogin, rec.WinnerDisplay = p.UserID, p.Login, p.Display
 		}
 	}
-	if doc, err := json.Marshal(mazeReplay{Initial: st, Gen: mr.cfg.Gen, Moves: mr.moves}); err == nil {
+	resolveMS := mr.cfg.ResolveBuffer.Milliseconds()
+	replay := mazearchive.Replay{
+		Final: st, Gen: mr.cfg.Gen, Moves: mr.moves,
+		ResolveMS: &resolveMS, Display: mr.cfg.Display,
+	}
+	// Zero when a round predates the capture and was resumed across the upgrade.
+	if mr.opening.StartedAt != 0 {
+		opening := mr.opening
+		replay.Opening = &opening
+	}
+	if doc, err := json.Marshal(replay); err == nil {
 		rec.Input = doc
 	} else {
 		rec.Input = []byte("{}")
@@ -492,21 +542,6 @@ func (mr *mazeRound) archive(reason string) (store.MazeRound, []store.MazeEvent)
 		evs[i] = e
 	}
 	return rec, evs
-}
-
-// mazeReplay is the document that makes a round re-runnable: the board and rules
-// it started under, plus every move in order. Restore it, replay the moves a cycle
-// at a time, and the engine — which contains no randomness at all — produces the
-// identical game.
-//
-// The board travels inside Initial rather than being regenerated from Seed. That
-// is the call internal/maze/persist.go already makes for restart-resume, and it
-// matters more here: an archive read back years and many redeploys later must not
-// depend on the generator still emitting byte-identical output.
-type mazeReplay struct {
-	Initial maze.RoundState  `json:"initial"`
-	Gen     maze.Config      `json:"gen"`
-	Moves   []mazeSubmission `json:"moves"`
 }
 
 // mazeFinish is one player getting through the door, copied out from under the
@@ -567,9 +602,9 @@ func mazePayout(reward int64, place int) int64 {
 // that had already happened away from whoever earned it.
 func (r *Router) awardMazeFinishers(mr *mazeRound, fs []mazeFinish) {
 	for _, f := range fs {
-		line := fmt.Sprintf("🚪 @%s escapes in %s.", f.Display, ordinal(f.Place))
+		line := fmt.Sprintf("🚪 @%s escapes in %s.", f.Display, mazeview.Ordinal(f.Place))
 		if f.Place == 1 {
-			line = fmt.Sprintf("🏁 @%s is OUT of the maze in %s — first place!", f.Display, plural(f.Cycle, "cycle"))
+			line = fmt.Sprintf("🏁 @%s is OUT of the maze in %s — first place!", f.Display, plural(f.Cycle, "turn"))
 		}
 
 		if r.store != nil {
@@ -611,7 +646,7 @@ func (r *Router) showMazeWins(m ChatMessage) {
 		return
 	}
 	if len(lb) == 0 {
-		r.reply(m, "Nobody has escaped the maze yet — !maze to start a round.")
+		r.reply(m, "Nobody has escaped yet — !getout to start a round.")
 		return
 	}
 	parts := make([]string, len(lb))
@@ -655,9 +690,11 @@ func (mr *mazeRound) announce(evs []maze.Event) (lines []string, end string, toa
 			// The chat line for a finish is written by awardMazeFinishers, which
 			// runs outside the lock and knows what was actually paid.
 			if p := mr.player(e.Seat); p != nil {
+				// The medal here for the same reason as in the panel: this toast is
+				// drawn by the overlay, where 🏁 came out as a grey chequerboard.
 				toasts = append(toasts, notifyData{
 					Kind:  "maze",
-					Line1: "🏁 " + p.Display + " is OUT",
+					Line1: mazeview.Medal(e.N) + " " + p.Display + " is OUT",
 					Line2: mazeOrdinalWord(e.N) + " out of the maze",
 				})
 			}
@@ -679,7 +716,7 @@ func (mr *mazeRound) announce(evs []maze.Event) (lines []string, end string, toa
 			}
 		case maze.EventTrapped:
 			if p := mr.player(e.Seat); p != nil {
-				texture = append(texture, fmt.Sprintf("🐻 @%s is caught for %s", p.Display, plural(e.N, "cycle")))
+				texture = append(texture, fmt.Sprintf("🐻 @%s is caught for %s", p.Display, plural(e.N, "turn")))
 			}
 		case maze.EventFreed:
 			if p := mr.player(e.Seat); p != nil {
@@ -688,7 +725,11 @@ func (mr *mazeRound) announce(evs []maze.Event) (lines []string, end string, toa
 		case maze.EventKeyTaken:
 			if p := mr.player(e.Seat); p != nil {
 				if e.N == 0 {
-					texture = append(texture, "🔑 @"+p.Display+" took the LAST key")
+					line := "🔑 @" + p.Display + " took the LAST key"
+					if out := mr.lockedOutLine(); out != "" {
+						line += " · " + out
+					}
+					texture = append(texture, line)
 				} else {
 					texture = append(texture, fmt.Sprintf("🔑 @%s has a key (%s left)", p.Display, plural(e.N, "key")))
 				}
@@ -700,16 +741,91 @@ func (mr *mazeRound) announce(evs []maze.Event) (lines []string, end string, toa
 				mr.saidBounce[e.Seat] = true
 				texture = append(texture, "🚪 @"+p.Display+" tried the door — no key!")
 			}
+		case maze.EventBonked:
+			// A bonk costs a whole cycle, and from the seat it is indistinguishable
+			// from a message Twitch swallowed as a duplicate: you typed, you did not
+			// move. The two want opposite responses — turn, versus say it again
+			// differently — and the bot never sees a dropped duplicate at all, so
+			// naming the bonk is the only side of the ambiguity it can speak to.
+			//
+			// This was feed-only, on the grounds that bonks are the most frequent
+			// event. That was written when a !go path banked several moves into
+			// fogged cells; with one deliberate move a turn, and a cell's own walls
+			// revealed the moment you stand on it, an attentive player cannot bonk
+			// by surprise. TestMazeChatVolumeStaysWithinBudget holds the claim.
+			if p := mr.player(e.Seat); p != nil {
+				texture = append(texture, "🧱 @"+p.Display+" walked into a wall — that turn is gone")
+			}
 		}
-		// Bonks are deliberately not in chat. They are by far the most frequent
-		// event, they say only that someone guessed a wall, and the board already
-		// shows the move was lost. They stay in the panel feed.
 	}
 
 	if len(texture) > 0 {
 		lines = append(lines, strings.Join(texture, " · "))
 	}
 	return append(lines, bookends...), end, toasts
+}
+
+// flushJoins turns the seats taken since the last cycle into one line and empties
+// the buffer. Coalescing is the whole point — see mazeRound.joined — so this is
+// deliberately neither one message per player nor the silence it replaces.
+func (mr *mazeRound) flushJoins() (string, bool) {
+	if len(mr.joined) == 0 {
+		return "", false
+	}
+	names := make([]string, 0, len(mr.joined))
+	for _, seat := range mr.joined {
+		if p := mr.player(seat); p != nil {
+			_, emoji := mazeview.Seat(seat)
+			names = append(names, emoji+" @"+p.Display)
+		}
+	}
+	mr.joined = mr.joined[:0]
+	if len(names) == 0 {
+		return "", false
+	}
+	line := strings.Join(names, " ")
+	if len(names) == 1 {
+		line += " took a seat"
+	} else {
+		line += " took seats"
+	}
+	if left := mr.round.Cfg.MaxSeats - len(mr.round.Players); left > 0 {
+		line += fmt.Sprintf(" — %s left", plural(left, "seat"))
+	}
+	line += "."
+	// The workaround lands here rather than in the opening line because you cannot
+	// repeat a move you have not made yet: these are the people about to make their
+	// first one. Once — twice inside one join window would be nagging.
+	if !mr.saidRepeatHint {
+		mr.saidRepeatHint = true
+		line += " Repeating a move? Say it differently: !gou."
+	}
+	return line, true
+}
+
+// lockedOutLine names whoever is still racing without a key at the instant the
+// last one leaves the board, and tells them the one thing that can change it.
+//
+// Decision 13 guarantees somebody is in this position at three players or more,
+// and the round never used to say a word to them — every other callout is about a
+// player who just did something, so the person the scarcity is aimed at plays two
+// minutes in silence. Said once, and phrased as a route back in rather than as
+// the bot pointing at whoever is losing.
+func (mr *mazeRound) lockedOutLine() string {
+	if mr.saidLastKey {
+		return ""
+	}
+	var names []string
+	for _, p := range mr.round.Players {
+		if p.Racing() && !p.HasKey {
+			names = append(names, "@"+p.Display)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	mr.saidLastKey = true
+	return strings.Join(names, " ") + ": spikes are your way back in — they make someone drop one."
 }
 
 // record appends a cycle's events to the permanent log. Caller holds mazeMu.
@@ -749,35 +865,13 @@ func (mr *mazeRound) logFeed(e maze.Event) {
 	if p := mr.player(e.Seat); p != nil {
 		name = p.Display
 	}
-	var line string
-	switch e.Kind {
-	case maze.EventSeatsLocked:
-		line = fmt.Sprintf("▶ locked — %s", plural(e.N, "key"))
-	case maze.EventKeyTaken:
-		line = "🔑 " + name
-		if e.N == 0 {
-			line += " — last key"
-		}
-	case maze.EventKeyDropped:
-		line = "🔑 dropped " + e.At.String()
-	case maze.EventSpiked:
-		line = "💀 " + name + " → start"
-	case maze.EventTrapped:
-		line = fmt.Sprintf("🐻 %s ×%d", name, e.N)
-	case maze.EventFreed:
-		line = "🔓 " + name
-	case maze.EventBounced:
-		line = "🚪 " + name + " — no key"
-	case maze.EventBonked:
-		line = "🧱 " + name
-	case maze.EventFinished:
-		line = fmt.Sprintf("🏁 %s %s", name, ordinal(e.N))
-	default:
+	line, ok := mazeview.FeedLine(e, name)
+	if !ok {
 		return
 	}
 	mr.feed = append(mr.feed, line)
-	if len(mr.feed) > mazeFeedLines {
-		mr.feed = mr.feed[len(mr.feed)-mazeFeedLines:]
+	if len(mr.feed) > mazeview.FeedLines {
+		mr.feed = mr.feed[len(mr.feed)-mazeview.FeedLines:]
 	}
 }
 
@@ -791,7 +885,7 @@ func mazeOrdinalWord(place int) string {
 	case 3:
 		return "third"
 	default:
-		return ordinal(place)
+		return mazeview.Ordinal(place)
 	}
 }
 
@@ -802,7 +896,7 @@ func (mr *mazeRound) seatsLockedLine(keys int) string {
 	// where the colour has to be said.
 	names := make([]string, 0, len(mr.round.Players))
 	for _, p := range mr.round.Players {
-		_, emoji := mazeSeat(p.Seat)
+		_, emoji := mazeview.Seat(p.Seat)
 		names = append(names, emoji+" @"+p.Display)
 	}
 	line := fmt.Sprintf("🧭 Seats locked: %s — %s on the board.",
@@ -818,7 +912,7 @@ func (mr *mazeRound) seatsLockedLine(keys int) string {
 
 func (mr *mazeRound) endLine(reason maze.EndReason) string {
 	if reason == maze.EndAbandoned {
-		return "🧭 Nobody joined — maze cancelled. !maze to try again."
+		return "🧭 Nobody joined — round cancelled. !getout to try again."
 	}
 	places := mr.round.Placements()
 	if len(places) == 0 {
@@ -826,18 +920,18 @@ func (mr *mazeRound) endLine(reason maze.EndReason) string {
 		for _, p := range mr.round.Players {
 			stranded = append(stranded, "@"+p.Display)
 		}
-		return fmt.Sprintf("⏱ Nobody made it out. %s — the maze wins. !maze to go again.",
+		return fmt.Sprintf("⏱ Nobody made it out. %s — the maze wins. !getout to go again.",
 			strings.Join(stranded, " "))
 	}
 	parts := make([]string, len(places))
 	for i, p := range places {
-		parts[i] = fmt.Sprintf("%s %s", ordinal(p.Place), p.Display)
+		parts[i] = fmt.Sprintf("%s %s", mazeview.Ordinal(p.Place), p.Display)
 	}
 	line := "🏁 Round over — " + strings.Join(parts, ", ") + "."
 	if left := len(mr.round.Players) - len(places); left > 0 {
 		line += fmt.Sprintf(" %d left behind in the dark.", left)
 	}
-	return line + " !maze to go again."
+	return line + " !getout to go again."
 }
 
 // --- ending -----------------------------------------------------------------
@@ -915,10 +1009,24 @@ func (r *Router) forceEndMaze() {
 // mazeRec is the persisted round: the engine's own state document plus the two
 // things it has no business knowing — the channel and how the board is drawn.
 type mazeRec struct {
-	RoomID  string          `json:"roomID"`
-	TickMS  int64           `json:"tickMs"`
-	Display string          `json:"display"`
-	Round   maze.RoundState `json:"round"`
+	RoomID string `json:"roomID"`
+	TickMS int64  `json:"tickMs"`
+	// ResolveMS is the beat between turns, carried for the same reason TickMS is: a
+	// round resumed after a restart plays by the rules it started under, and editing
+	// maze.toml mid-round must not re-pace a game already in progress.
+	//
+	// A pointer because zero is a meaningful setting — a round deliberately played
+	// with no beat — and must stay distinguishable from a document written before
+	// this field existed, which should fall back to the configured default. This is
+	// the same trap LoadMazeConfig calls out for spikes and key_deficit.
+	ResolveMS *int64          `json:"resolveMs,omitempty"`
+	Display   string          `json:"display"`
+	Round     maze.RoundState `json:"round"`
+	// Opening is the round as it began, carried here for the same reason the
+	// accumulating log is: a bot that restarts mid-round has to be able to archive
+	// a replayable document afterwards, and by then the only moment the opening
+	// state existed is long past.
+	Opening *maze.RoundState `json:"opening,omitempty"`
 
 	// The accumulating archive. Carried here rather than buffered in memory so a
 	// bot that restarts mid-round still has the first half of the game to log when
@@ -926,19 +1034,42 @@ type mazeRec struct {
 	// rewritten every cycle, which is nothing for either backend but is the reason
 	// the feed is deliberately *not* here — that one is narration, this one is the
 	// record.
-	Log   []store.MazeEvent `json:"log,omitempty"`
-	Moves []mazeSubmission  `json:"moves,omitempty"`
+	Log   []store.MazeEvent        `json:"log,omitempty"`
+	Moves []mazearchive.Submission `json:"moves,omitempty"`
+}
+
+// openingRec is the stored opening state, or a zero one when the document predates
+// it. Zero is the signal archive uses to leave Opening out rather than write a
+// state that was never real.
+func openingRec(rec mazeRec) maze.RoundState {
+	if rec.Opening == nil {
+		return maze.RoundState{}
+	}
+	return *rec.Opening
+}
+
+// openingOf is mr.opening as a pointer, or nil when the round has none — which
+// only happens for a round that was already in flight when this was added.
+func openingOf(mr *mazeRound) *maze.RoundState {
+	if mr.opening.StartedAt == 0 {
+		return nil
+	}
+	opening := mr.opening
+	return &opening
 }
 
 // persistMaze mirrors the round to the store. Caller holds mazeMu.
 func (r *Router) persistMaze(mr *mazeRound) {
+	resolveMS := mr.cfg.ResolveBuffer.Milliseconds()
 	rec := mazeRec{
-		RoomID:  mr.roomID,
-		TickMS:  mr.cfg.Tick.Milliseconds(),
-		Display: mr.cfg.Display,
-		Round:   mr.round.State(),
-		Log:     mr.log,
-		Moves:   mr.moves,
+		RoomID:    mr.roomID,
+		TickMS:    mr.cfg.Tick.Milliseconds(),
+		ResolveMS: &resolveMS,
+		Opening:   openingOf(mr),
+		Display:   mr.cfg.Display,
+		Round:     mr.round.State(),
+		Log:       mr.log,
+		Moves:     mr.moves,
 	}
 	r.saveRound(mazeGame, mr.roomID, mr.round.Deadline().UnixMilli(), rec)
 }
@@ -974,8 +1105,14 @@ func (r *Router) loadMaze() {
 			stop: make(chan struct{}), saidBounce: map[int]bool{},
 			log: rec.Log, moves: rec.Moves,
 		}
+		if rec.Opening != nil {
+			done.opening = *rec.Opening
+		}
 		if rec.TickMS > 0 {
 			done.cfg.Tick = time.Duration(rec.TickMS) * time.Millisecond
+		}
+		if rec.ResolveMS != nil {
+			done.cfg.ResolveBuffer = time.Duration(*rec.ResolveMS) * time.Millisecond
 		}
 		r.archiveMaze(done, "")
 		r.clearRound(mazeGame)
@@ -991,6 +1128,9 @@ func (r *Router) loadMaze() {
 	if rec.TickMS > 0 {
 		cfg.Tick = time.Duration(rec.TickMS) * time.Millisecond
 	}
+	if rec.ResolveMS != nil {
+		cfg.ResolveBuffer = time.Duration(*rec.ResolveMS) * time.Millisecond
+	}
 	if rec.Display != "" {
 		cfg.Display = rec.Display
 	}
@@ -999,7 +1139,8 @@ func (r *Router) loadMaze() {
 	mr := &mazeRound{
 		round: round, cfg: cfg, roomID: rec.RoomID,
 		stop: make(chan struct{}), saidBounce: map[int]bool{},
-		log: rec.Log, moves: rec.Moves,
+		opening: openingRec(rec),
+		log:     rec.Log, moves: rec.Moves,
 	}
 	// Assigning r.maze without mazeMu is safe only because loadMaze runs at
 	// startup, before the IRC loop and before any game timer exists. Don't move
@@ -1011,125 +1152,42 @@ func (r *Router) loadMaze() {
 
 // --- overlay ----------------------------------------------------------------
 
-// mazeCell is one cell as the overlay sees it. Walls are sent only for revealed
-// cells: an unrevealed cell's layout is the thing the fog exists to withhold, so
-// it must not travel to the renderer at all rather than be sent and hidden in CSS.
-type mazeCell struct {
-	State string `json:"state"`           // unknown | frontier | revealed
-	Walls uint8  `json:"walls,omitempty"` // N/E/S/W bitmask; revealed cells only
-}
-
-// mazePlayer is one runner's HUD row.
-type mazePlayer struct {
-	Seat     int    `json:"seat"`
-	Name     string `json:"name"`
-	At       string `json:"at"`
-	HasKey   bool   `json:"hasKey,omitempty"`
-	StuckFor int    `json:"stuckFor,omitempty"`
-	Place    int    `json:"place,omitempty"`
-	// Locked says a move is in; Move says which way.
-	//
-	// The direction was originally withheld, on the grounds that a viewer on a
-	// fast connection could read a slower player's intent off the board and
-	// counter it inside the same cycle. Playtesting overruled it: on a stream this
-	// size that interception is theoretical, while "did my command register, and
-	// which way am I about to go" is a question people have every single cycle.
-	Locked bool   `json:"locked,omitempty"`
-	Move   string `json:"move,omitempty"`
-	// Color is the seat's swatch, sent rather than looked up in the renderer so
-	// that it and the emoji chat was told are one palette. See mazeSeats.
-	Color string `json:"color"`
-}
-
-// mazeBoard is the render payload.
-type mazeBoard struct {
-	// RoundID identifies the round this board belongs to. The renderer keeps a
-	// little per-round state — which sprung traps it has already faded out — and
-	// used to spot a new round by watching the cycle counter go backwards. That is
-	// inference, and it fails in the cases that matter: a bot killed mid-round
-	// never sends the hidden push that would have cleared it, and two rounds are
-	// both briefly at cycle zero. Saying which round it is removes the guess.
-	RoundID   string       `json:"roundId"`
-	Display   string       `json:"display"`
-	Phase     string       `json:"phase"`
-	Cycle     int          `json:"cycle"`
-	MaxCycles int          `json:"maxCycles"`
-	TickMS    int64        `json:"tickMs"`
-	Size      int          `json:"size"`
-	Cells     []mazeCell   `json:"cells"` // row-major, y*Size+x
-	Start     string       `json:"start"`
-	Exit      string       `json:"exit"`
-	Keys      []string     `json:"keys"`  // unclaimed keys, drawn through the fog
-	Traps     []mazeTrap   `json:"traps"` // sprung traps only
-	Players   []mazePlayer `json:"players"`
-	Seats     int          `json:"seats"`
-	Feed      []string     `json:"feed,omitempty"`
-}
-
-type mazeTrap struct {
-	At   string `json:"at"`
-	Kind string `json:"kind"`
-}
-
-// mazePayload builds the render state. Caller holds mazeMu.
+// mazePayload builds the render state for this round. Caller holds mazeMu.
 //
-// Two things are deliberately withheld. Unsprung traps never leave the bot — they
-// are the one genuine surprise in the game, and a payload that carried them would
-// put them one devtools panel away. Neither do the walls of cells nobody has
-// walked into yet. Objectives are the exception and are always sent: the fog
-// hides the maze's shape, not where you are trying to get to.
-func (r *Router) mazePayload(mr *mazeRound) mazeBoard {
-	rd := mr.round
-	b := mazeBoard{
-		RoundID:   mr.id(),
-		Display:   mr.cfg.Display,
-		Phase:     rd.Phase.String(),
-		Cycle:     rd.Cycle,
-		MaxCycles: rd.Cfg.MaxCycles,
-		TickMS:    mr.cfg.Tick.Milliseconds(),
-		Size:      rd.Map.Size,
-		Start:     rd.Map.Start.String(),
-		Exit:      rd.Map.Exit.String(),
-		Seats:     rd.Cfg.MaxSeats,
-		Cells:     make([]mazeCell, 0, rd.Map.Size*rd.Map.Size),
-		Feed:      append([]string(nil), mr.feed...),
-	}
-	for y := 0; y < rd.Map.Size; y++ {
-		for x := 0; x < rd.Map.Size; x++ {
-			c := maze.Cell{X: x, Y: y}
-			switch {
-			case rd.Revealed(c):
-				b.Cells = append(b.Cells, mazeCell{State: "revealed", Walls: rd.Map.Walls(c)})
-			case rd.Frontier(c):
-				b.Cells = append(b.Cells, mazeCell{State: "frontier"})
-			default:
-				b.Cells = append(b.Cells, mazeCell{State: "unknown"})
-			}
-		}
-	}
-	for _, k := range rd.KeysOnMap() {
-		b.Keys = append(b.Keys, k.String())
-	}
-	for i, t := range rd.Map.Traps {
-		if rd.TrapSprung(i) {
-			b.Traps = append(b.Traps, mazeTrap{At: t.At.String(), Kind: t.Kind.String()})
-		}
-	}
-	for _, p := range rd.Players {
-		hex, _ := mazeSeat(p.Seat)
-		row := mazePlayer{
-			Seat: p.Seat, Name: p.Display, At: p.At.String(), Color: hex,
-			HasKey: p.HasKey, StuckFor: p.StuckFor, Place: p.Place,
-		}
-		if d, ok := p.NextDir(); ok {
-			row.Locked, row.Move = true, d.String()
-		}
-		b.Players = append(b.Players, row)
-	}
-	return b
+// Everything the board can be derived from lives on the round itself; what it
+// cannot know — which round this is, how it is being displayed, where the turn
+// timer stands — is what this supplies. cmd/maze-replay calls the same builder
+// with the same three answers taken from a stored round.
+func (r *Router) mazePayload(mr *mazeRound) mazeview.Board {
+	return mazeview.Build(mr.round, mazeview.Options{
+		RoundID:     mr.id(),
+		Display:     mr.cfg.Display,
+		TickMS:      mr.cfg.Tick.Milliseconds(),
+		CycleMsLeft: mr.cycleMsLeft(),
+		Feed:        mr.feed,
+	})
 }
 
-func (r *Router) pushMaze(b mazeBoard) {
+// cycleMsLeft is how long until the current cycle resolves. Clamped at zero so an
+// overrunning cycle cannot hand the page a negative bar, and falling back to a
+// whole tick before anything has ticked — a zero there would read as a turn that
+// is already over.
+// The whole remainder is reported, beat included, and the renderer is what caps it
+// at a turn. Capping here instead looks equivalent and is not: the page samples
+// this once per push and then runs its own clock, so a pre-capped value simply
+// starts an 8-second countdown one second early. Only something with a live clock
+// can hold the bar full while the beat plays, and that is the page.
+func (mr *mazeRound) cycleMsLeft() int64 {
+	if mr.cycleEndsAt.IsZero() {
+		return mr.cfg.cyclePeriod().Milliseconds()
+	}
+	if ms := time.Until(mr.cycleEndsAt).Milliseconds(); ms > 0 {
+		return ms
+	}
+	return 0
+}
+
+func (r *Router) pushMaze(b mazeview.Board) {
 	if r.overlay != nil {
 		r.overlay.Push("maze", b)
 	}
@@ -1142,18 +1200,3 @@ func (r *Router) pushMazeHidden() {
 }
 
 // --- small helpers ----------------------------------------------------------
-
-func ordinal(n int) string {
-	suffix := "th"
-	if n%100 < 11 || n%100 > 13 {
-		switch n % 10 {
-		case 1:
-			suffix = "st"
-		case 2:
-			suffix = "nd"
-		case 3:
-			suffix = "rd"
-		}
-	}
-	return fmt.Sprintf("%d%s", n, suffix)
-}

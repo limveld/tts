@@ -4,8 +4,8 @@ One Browser Source does two jobs. It plays each TTS clip through **OBS/Streamlab
 of your machine's speakers — OBS renders the source's audio natively into the stream mix, so
 you need **no virtual audio device (BlackHole) and no desktop-audio capture**, and it works
 whether the server runs on the streaming machine or a different one. It is also where every
-on-screen game draws: the gamble panel, the depth widget, Wordle, Connections, the Torch
-Maze, and the shoutout/ad toasts.
+on-screen game draws: the gamble panel, the depth widget, Wordle, Connections, GET
+OUT!!!, and the shoutout/ad toasts.
 
 This is the default (`-player browser`). Use `-player vlc` to play on local speakers instead
 (handy for testing without OBS).

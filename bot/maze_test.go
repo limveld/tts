@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"tts/internal/maze"
+	"tts/internal/mazearchive"
+	"tts/internal/mazeview"
 	"tts/store"
 )
 
@@ -45,15 +48,15 @@ func seat(t *testing.T, r *Router, mr *mazeRound, users ...string) {
 	}
 }
 
-func lastMazeBoard(t *testing.T, ov *fakeOverlay) mazeBoard {
+func lastMazeBoard(t *testing.T, ov *fakeOverlay) mazeview.Board {
 	t.Helper()
 	p, ok := ov.last("maze")
 	if !ok {
 		t.Fatal("no maze push")
 	}
-	b, ok := p.data.(mazeBoard)
+	b, ok := p.data.(mazeview.Board)
 	if !ok {
-		t.Fatalf("maze push carried %T, want mazeBoard", p.data)
+		t.Fatalf("maze push carried %T, want mazeview.Board", p.data)
 	}
 	return b
 }
@@ -178,13 +181,13 @@ func TestMazeMovesAreSilent(t *testing.T) {
 	}
 }
 
-func TestMazeMoveWithNoRoundPointsAtMaze(t *testing.T) {
+func TestMazeMoveWithNoRoundPointsAtGetOut(t *testing.T) {
 	r, _, _, chat := econRouter(t)
 	r.overlay = &fakeOverlay{}
 
 	r.Handle(emsg("bob", "!up", false))
-	if len(chat.replies) != 1 || !strings.Contains(chat.replies[0].text, "!maze") {
-		t.Fatalf("replies=%v, want a move with no round to point at !maze", chat.replies)
+	if len(chat.replies) != 1 || !strings.Contains(chat.replies[0].text, "!getout") {
+		t.Fatalf("replies=%v, want a move with no round to point at !getout", chat.replies)
 	}
 }
 
@@ -429,7 +432,7 @@ func TestMazeAnnouncesEnding(t *testing.T) {
 		cycle(r, mr)
 	}
 	last := lastSend(chat)
-	if !strings.Contains(last, "!maze") {
+	if !strings.Contains(last, "!getout") {
 		t.Errorf("closing line %q does not invite another round", last)
 	}
 }
@@ -531,8 +534,8 @@ func TestMazeCommandsAreReserved(t *testing.T) {
 func TestOrdinal(t *testing.T) {
 	cases := map[int]string{1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 11: "11th", 12: "12th", 13: "13th", 21: "21st", 22: "22nd"}
 	for n, want := range cases {
-		if got := ordinal(n); got != want {
-			t.Errorf("ordinal(%d)=%q want %q", n, got, want)
+		if got := mazeview.Ordinal(n); got != want {
+			t.Errorf("mazeview.Ordinal(%d)=%q want %q", n, got, want)
 		}
 	}
 }
@@ -577,10 +580,14 @@ func TestMazeChatCoalescesACycle(t *testing.T) {
 	}
 }
 
-// TestMazeBonksStayOutOfChat: bonking is far and away the most frequent event, it
-// says only that someone guessed a wall, and the board already shows the move was
-// lost. It belongs in the panel, not in a chat with nine people in it.
-func TestMazeBonksStayOutOfChat(t *testing.T) {
+// TestMazeBonksReachChatCoalesced: a bonk costs a whole cycle and is
+// indistinguishable from a message Twitch swallowed as a duplicate — you typed and
+// you did not move — so it has to be said. It used to be feed-only, which left the
+// player unable to tell the two apart in the mode that does not draw the feed.
+//
+// A cycle's worth of them is still one message: several bonks in one tick must
+// coalesce, or a scrappy cycle costs the channel a line per player.
+func TestMazeBonksReachChatCoalesced(t *testing.T) {
 	_, _, mr := seatedRound(t)
 
 	before := len(mr.feed) // seats locking has already logged an entry
@@ -589,9 +596,16 @@ func TestMazeBonksStayOutOfChat(t *testing.T) {
 		ev(maze.EventBonked, 1, 0, maze.Cell{X: 2, Y: 2}),
 	})
 
-	if len(lines) != 0 {
-		t.Errorf("bonks produced chat lines: %q", lines)
+	if len(lines) != 1 {
+		t.Fatalf("%d chat lines for two bonks in one cycle, want 1: %q", len(lines), lines)
 	}
+	for _, want := range []string{"bob", "carol", "·"} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("coalesced bonk line %q is missing %q", lines[0], want)
+		}
+	}
+	// A bonk is not worth interrupting the stage for; toasts stay for the two rare
+	// beats that are.
 	if len(toasts) != 0 {
 		t.Errorf("bonks produced toasts: %+v", toasts)
 	}
@@ -692,11 +706,11 @@ func TestMazeToastsAreRareByConstruction(t *testing.T) {
 
 func TestMazeFeedIsBounded(t *testing.T) {
 	_, _, mr := seatedRound(t)
-	for i := 0; i < mazeFeedLines*3; i++ {
+	for i := 0; i < mazeview.FeedLines*3; i++ {
 		mr.announce([]maze.Event{ev(maze.EventBonked, i%3, 0, maze.Cell{X: 1, Y: 1})})
 	}
-	if len(mr.feed) != mazeFeedLines {
-		t.Errorf("feed holds %d lines, want it capped at %d", len(mr.feed), mazeFeedLines)
+	if len(mr.feed) != mazeview.FeedLines {
+		t.Errorf("feed holds %d lines, want it capped at %d", len(mr.feed), mazeview.FeedLines)
 	}
 }
 
@@ -716,10 +730,27 @@ func playMazeRound(t *testing.T, r *Router, mr *mazeRound) int {
 // playOneMazeCycle routes every racer one step toward what they are after and
 // advances a cycle.
 func playOneMazeCycle(r *Router, mr *mazeRound) {
+	playOneMazeCycleSlop(r, mr, nil, 0)
+}
+
+// playOneMazeCycleSlop is playOneMazeCycle with a chance of each racer picking a
+// direction at random instead of routing — including into a wall.
+//
+// It exists because perfect routing never bonks: playOneMazeCycle only ever
+// submits a direction it has already checked is open, so a suite built on it is
+// blind to the one chat line that can fire every single cycle. Nothing about the
+// volume budget is meaningful if the measurement cannot produce the event most
+// likely to break it.
+func playOneMazeCycleSlop(r *Router, mr *mazeRound, rng *rand.Rand, slop float64) {
 	{
 		bd := mr.round.Map
+		dirs := []maze.Dir{maze.North, maze.East, maze.South, maze.West}
 		for _, p := range mr.round.Players {
 			if !p.Racing() || p.StuckFor > 0 {
+				continue
+			}
+			if rng != nil && rng.Float64() < slop {
+				mr.round.Submit(p.UserID, dirs[rng.Intn(len(dirs))], time.Now())
 				continue
 			}
 			target := bd.Exit
@@ -770,6 +801,69 @@ func TestMazeChatVolumeStaysWithinBudget(t *testing.T) {
 		}
 	}
 	t.Logf("worst observed chat volume: %.2f lines per cycle", worst)
+}
+
+// TestMazeChatVolumeSurvivesSloppyPlay is the budget above measured against play
+// that actually goes wrong.
+//
+// The perfect-routing measurement cannot see bonks, and a bonk is the only line
+// the maze can emit on every cycle of a round — so without this the guard passes
+// while saying nothing about the case that would break it. A third of moves made
+// at random is well past how badly a real chat plays.
+func TestMazeChatVolumeSurvivesSloppyPlay(t *testing.T) {
+	worst, worstSeed := 0.0, 0
+	for seed := 0; seed < 12; seed++ {
+		r, _, chat, _, mr := startTestMaze(t)
+		seat(t, r, mr, "bob", "carol", "dave", "erin", "finn")
+		rng := rand.New(rand.NewSource(int64(seed)))
+
+		cycles := 0
+		for mr.round.Phase != maze.PhaseDone && cycles < 200 {
+			playOneMazeCycleSlop(r, mr, rng, 0.33)
+			cycles++
+		}
+		if cycles < 5 {
+			t.Fatalf("round %d ended in %d cycles; nothing to measure", seed, cycles)
+		}
+		perCycle := float64(len(chat.sends)) / float64(cycles)
+		if perCycle > worst {
+			worst, worstSeed = perCycle, seed
+		}
+		if perCycle > 1.0 {
+			t.Errorf("round %d: %d chat lines over %d cycles (%.2f per cycle) — sloppy play drowns the channel",
+				seed, len(chat.sends), cycles, perCycle)
+		}
+	}
+	t.Logf("worst observed chat volume under sloppy play: %.2f lines per cycle (seed %d)", worst, worstSeed)
+}
+
+// TestMazeCycleMsLeftReportsTheWholeCyclePeriod: the payload carries the real time
+// to the next resolution, beat included, and the renderer caps what it *draws* at
+// one turn. Capping here would look equivalent and is not — the page samples this
+// once per push and then runs its own clock, so a pre-capped value just starts the
+// countdown a beat early instead of holding it full while the runners move.
+func TestMazeCycleMsLeftReportsTheWholeCyclePeriod(t *testing.T) {
+	mr := &mazeRound{cfg: mazeConfig{Tick: 10 * time.Second, ResolveBuffer: time.Second}}
+
+	mr.cycleEndsAt = time.Now().Add(mr.cfg.cyclePeriod())
+	if got := mr.cycleMsLeft(); got < 10900 || got > 11000 {
+		t.Errorf("at the top of a cycle cycleMsLeft = %d, want the whole 11000ms period", got)
+	}
+
+	mr.cycleEndsAt = time.Now().Add(4 * time.Second)
+	if got := mr.cycleMsLeft(); got < 3900 || got > 4000 {
+		t.Errorf("mid-turn cycleMsLeft = %d, want ~4000", got)
+	}
+
+	mr.cycleEndsAt = time.Now().Add(-time.Second)
+	if got := mr.cycleMsLeft(); got != 0 {
+		t.Errorf("after the deadline cycleMsLeft = %d, want 0", got)
+	}
+
+	mr.cycleEndsAt = time.Time{}
+	if got := mr.cycleMsLeft(); got != 11000 {
+		t.Errorf("before the first tick cycleMsLeft = %d, want a whole period", got)
+	}
 }
 
 // --- payout -----------------------------------------------------------------
@@ -834,7 +928,7 @@ func TestMazePaysEveryFinisherAndTalliesTheWinner(t *testing.T) {
 			t.Fatal(err)
 		}
 		if got != want {
-			t.Errorf("%s finished %s with balance %d, want %d", p.Login, ordinal(p.Place), got, want)
+			t.Errorf("%s finished %s with balance %d, want %d", p.Login, mazeview.Ordinal(p.Place), got, want)
 		}
 	}
 	// Anyone who did not get out is paid nothing.
@@ -962,17 +1056,21 @@ func TestMazeWinsLeaderboard(t *testing.T) {
 func TestMazeWinsEmptyLeaderboard(t *testing.T) {
 	r, _, _, chat := econRouter(t)
 	r.Handle(emsg("bob", "!mazewins", false))
-	if len(chat.replies) != 1 || !strings.Contains(chat.replies[0].text, "!maze") {
-		t.Errorf("replies=%v want an empty-leaderboard nudge pointing at !maze", chat.replies)
+	if len(chat.replies) != 1 || !strings.Contains(chat.replies[0].text, "!getout") {
+		t.Errorf("replies=%v want an empty-leaderboard nudge pointing at !getout", chat.replies)
 	}
 }
 
 // TestMazeOpenBannerNamesRealSeconds: shortDuration rounds to the nearest minute
 // — it is built for uptime and follow-age — so every join window this game will
 // ever have rendered as "0m".
+//
+// Measured in whole cycles, not in ticks: a join cycle burns the resolve beat like
+// any other, so counting only the input window would promise people two seconds
+// less than they actually get to take a seat in.
 func TestMazeOpenBannerNamesRealSeconds(t *testing.T) {
 	_, _, chat, _, mr := startTestMaze(t)
-	want := time.Duration(mr.round.Cfg.JoinCycles) * mr.cfg.Tick
+	want := time.Duration(mr.round.Cfg.JoinCycles) * mr.cfg.cyclePeriod()
 
 	if len(chat.sends) == 0 {
 		t.Fatal("no opening announcement")
@@ -1152,6 +1250,10 @@ func TestMazeTickerDoesNotCollapseWhenChatIsSlow(t *testing.T) {
 	const tick = 30 * time.Millisecond
 	cfg := defaultMazeConfig()
 	cfg.Tick = tick
+	// No resolve beat here. This is about the ticker not delivering two cycles back
+	// to back after a slow send, and a second of dead time between cycles would
+	// swamp a 30ms tick and measure nothing.
+	cfg.ResolveBuffer = 0
 	r.mazeCfg = cfg
 
 	r.Handle(emsg("alice", "!maze", false))
@@ -1179,7 +1281,7 @@ func TestMazeTickerDoesNotCollapseWhenChatIsSlow(t *testing.T) {
 	}
 	var cycles []mark
 	for _, p := range ov.pushes {
-		b, ok := p.data.(mazeBoard)
+		b, ok := p.data.(mazeview.Board)
 		if !ok {
 			continue
 		}
@@ -1272,6 +1374,156 @@ func mazeLog(t *testing.T, st Store) mazeLogReader {
 	return rd
 }
 
+// TestMazeArchiveReplaysToTheSameGame is the assertion the archive exists for and
+// which nothing used to make: re-run a stored round and you get the same game.
+//
+// Everything else about the log could pass while this failed. The old document
+// stored the *finished* state under a field called Initial, so restoring it and
+// replaying every move produced a round that had already ended and went nowhere —
+// no error, no panic, just an empty replay that looked like a working one. The
+// board being present and restorable, which is what was asserted before, is
+// equally true of a finished round.
+//
+// Both reconstruction paths are covered, because rounds archived before the
+// opening state was recorded still have to be watchable.
+func TestMazeArchiveReplaysToTheSameGame(t *testing.T) {
+	r, st, _, _, mr := startTestMaze(t)
+	seat(t, r, mr, "bob", "carol", "dave")
+	playRecordedRound(t, r, mr)
+
+	rounds, err := mazeLog(t, st).MazeRoundLog(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rounds) != 1 {
+		t.Fatalf("archived %d rounds, want the one just played", len(rounds))
+	}
+	rec := rounds[0]
+
+	var rep mazearchive.Replay
+	if err := json.Unmarshal(rec.Input, &rep); err != nil {
+		t.Fatalf("input is not a replay document: %v", err)
+	}
+	if len(rep.Moves) == 0 {
+		t.Fatal("nothing to replay: the round recorded no moves")
+	}
+
+	want := mr.round
+	for _, tc := range []struct {
+		name string
+		doc  mazearchive.Replay
+	}{
+		{"from the recorded opening state", rep},
+		{"rebuilt from the final state", withoutOpening(rep)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := mazearchive.Reconstruct(tc.doc)
+			if err != nil {
+				t.Fatalf("reconstruct: %v", err)
+			}
+			if len(got.Players) != len(want.Players) {
+				t.Fatalf("replay seats %d players, the round had %d", len(got.Players), len(want.Players))
+			}
+
+			// Stepped until the round says it is over, not for a fixed number of
+			// turns: join ticks do not advance the cycle counter, so counting turns
+			// stops a replay short by exactly the join window.
+			run := mazearchive.NewRunner(tc.doc, time.Duration(rec.TickMS)*time.Millisecond)
+			for guard := 0; got.Phase != maze.PhaseDone; guard++ {
+				if guard > rec.Cycles+want.Cfg.JoinCycles+10 {
+					t.Fatalf("replay did not finish: stuck on turn %d in %v", got.Cycle, got.Phase)
+				}
+				if _, err := run.Step(got); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if got.Cycle != want.Cycle {
+				t.Errorf("replay ended on turn %d, the round ended on %d", got.Cycle, want.Cycle)
+			}
+			if got.Phase != want.Phase {
+				t.Errorf("replay ended %v, the round ended %v", got.Phase, want.Phase)
+			}
+			gotPlaces, wantPlaces := placings(got), placings(want)
+			if !reflect.DeepEqual(gotPlaces, wantPlaces) {
+				t.Errorf("replay finished %v, the round finished %v", gotPlaces, wantPlaces)
+			}
+			for _, w := range want.Players {
+				p, ok := got.PlayerBy(w.UserID)
+				if !ok {
+					t.Errorf("%s is not in the replay at all", w.Login)
+					continue
+				}
+				if p.At != w.At {
+					t.Errorf("%s ends the replay at %s, ended the round at %s", w.Login, p.At, w.At)
+				}
+				if p.Seat != w.Seat {
+					t.Errorf("%s replays in seat %d, played in seat %d", w.Login, p.Seat, w.Seat)
+				}
+			}
+		})
+	}
+}
+
+// playRecordedRound plays a round out through the *command* path, so the moves
+// land in the archive.
+//
+// playMazeRound submits straight into the engine, which is right for the tests
+// that only care where the sprites end up — but it bypasses moveMaze, so nothing
+// is recorded and the replay document comes out with an empty move list. A replay
+// test built on it passes by replaying nothing.
+func playRecordedRound(t *testing.T, r *Router, mr *mazeRound) {
+	t.Helper()
+	say := map[maze.Dir]string{
+		maze.North: "!up", maze.South: "!down", maze.West: "!left", maze.East: "!right",
+	}
+	for mr.round.Phase != maze.PhaseDone && mr.round.Cycle < 200 {
+		bd := mr.round.Map
+		for _, p := range mr.round.Players {
+			if !p.Racing() || p.StuckFor > 0 {
+				continue
+			}
+			target := bd.Exit
+			if !p.HasKey {
+				if ks := mr.round.KeysOnMap(); len(ks) > 0 {
+					target = ks[p.Seat%len(ks)]
+				}
+			}
+			dist := bd.Distances(target)
+			best, pick, found := dist[p.At.Y*bd.Size+p.At.X], maze.North, false
+			for _, d := range []maze.Dir{maze.North, maze.East, maze.South, maze.West} {
+				if !bd.Open(p.At, d) {
+					continue
+				}
+				n, _ := bd.Neighbor(p.At, d)
+				if v := dist[n.Y*bd.Size+n.X]; v >= 0 && v < best {
+					best, pick, found = v, d, true
+				}
+			}
+			if found {
+				r.Handle(emsg(p.Login, say[pick], false))
+			}
+		}
+		cycle(r, mr)
+	}
+}
+
+// withoutOpening is a stored round as it would have looked before the opening
+// state was recorded — the shape every already-archived round still has.
+func withoutOpening(rep mazearchive.Replay) mazearchive.Replay {
+	rep.Opening = nil
+	return rep
+}
+
+// placings is finishing order as "1:bob", for comparing two runs of a round.
+func placings(rd *maze.Round) []string {
+	var out []string
+	for _, p := range rd.Placements() {
+		out = append(out, fmt.Sprintf("%d:%s", p.Place, p.Login))
+	}
+	return out
+}
+
 // TestMazeArchivesAFinishedRound is the round trip: play one out, then read it
 // back from the archive and check it describes the same game.
 func TestMazeArchivesAFinishedRound(t *testing.T) {
@@ -1310,18 +1562,45 @@ func TestMazeArchivesAFinishedRound(t *testing.T) {
 
 	// The replay document must actually be replayable: the board has to be in it,
 	// not merely a seed to rebuild one from.
-	var doc mazeReplay
+	var doc mazearchive.Replay
 	if err := json.Unmarshal(got.Input, &doc); err != nil {
 		t.Fatalf("input is not a replay document: %v", err)
 	}
-	if len(doc.Initial.Board.Walls) != mr.round.Map.Size*mr.round.Map.Size {
-		t.Errorf("replay carries %d wall masks, want a whole board", len(doc.Initial.Board.Walls))
+	if len(doc.Final.Board.Walls) != mr.round.Map.Size*mr.round.Map.Size {
+		t.Errorf("replay carries %d wall masks, want a whole board", len(doc.Final.Board.Walls))
 	}
 	if len(doc.Moves) == 0 {
 		t.Error("replay carries no moves; the round cannot be re-run from it")
 	}
-	if _, err := maze.Restore(doc.Initial); err != nil {
+	if _, err := maze.Restore(doc.Final); err != nil {
 		t.Errorf("the archived board does not restore: %v", err)
+	}
+
+	// And the opening state has to be the *opening* one. This is the assertion the
+	// archive existed for and did not make: the board being present and restorable
+	// is equally true of the finished state, which is what used to be stored under
+	// the name "initial" — so a replay restored a round that had already ended and
+	// played nothing, with nothing anywhere reporting a problem.
+	if doc.Opening == nil {
+		t.Fatal("replay carries no opening state; a replay cannot start from anywhere")
+	}
+	if doc.Opening.Cycle != 0 {
+		t.Errorf("opening state is at cycle %d, want the round before it started", doc.Opening.Cycle)
+	}
+	for _, p := range doc.Opening.Players {
+		if p.Place != 0 {
+			t.Errorf("opening state already has %s placed %d — that is the end of the round", p.Login, p.Place)
+		}
+	}
+	if n := len(doc.Final.Players); n > 0 && len(doc.Opening.Players) != 0 {
+		t.Errorf("opening state has %d players; seats are taken after it is captured",
+			len(doc.Opening.Players))
+	}
+	if doc.Display == "" {
+		t.Error("replay does not record which display it was played on")
+	}
+	if doc.ResolveMS == nil {
+		t.Error("replay does not record the resolve beat; its pacing cannot be reproduced")
 	}
 
 	evs, err := mazeLog(t, st).MazeRoundEvents(got.ID)
@@ -1481,7 +1760,7 @@ func TestMazeRosterNamesEachPlayersColour(t *testing.T) {
 		t.Fatalf("last line is not the roster: %q", roster)
 	}
 	for _, p := range mr.round.Players {
-		_, emoji := mazeSeat(p.Seat)
+		_, emoji := mazeview.Seat(p.Seat)
 		if !strings.Contains(roster, emoji+" @"+p.Display) {
 			t.Errorf("roster %q does not give %s their colour %s", roster, p.Display, emoji)
 		}
@@ -1502,7 +1781,7 @@ func TestMazeSeatColoursAreOnePalette(t *testing.T) {
 	}
 	seen := map[string]int{}
 	for _, p := range b.Players {
-		hex, _ := mazeSeat(p.Seat)
+		hex, _ := mazeview.Seat(p.Seat)
 		if p.Color != hex {
 			t.Errorf("seat %d renders %s but the roster calls it %s", p.Seat, p.Color, hex)
 		}
@@ -1516,20 +1795,6 @@ func TestMazeSeatColoursAreOnePalette(t *testing.T) {
 		if n > 1 {
 			t.Errorf("%d players share colour %s", n, hex)
 		}
-	}
-}
-
-// TestMazeSeatWrapsPastThePalette: max_seats is configurable and the palette is
-// five long, so seat 5 has to come back round rather than panic.
-func TestMazeSeatWrapsPastThePalette(t *testing.T) {
-	for _, n := range []int{0, 4, 5, 11} {
-		hex, emoji := mazeSeat(n)
-		if hex == "" || emoji == "" {
-			t.Errorf("seat %d has no colour: %q/%q", n, hex, emoji)
-		}
-	}
-	if h0, e0 := mazeSeat(0); func() bool { h, e := mazeSeat(len(mazeSeats)); return h != h0 || e != e0 }() {
-		t.Error("seat wrapping does not return to the first colour")
 	}
 }
 

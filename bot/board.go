@@ -77,7 +77,7 @@ func boardBusyMsg(live boardKind) string {
 	case boardWordle:
 		return "🟩 a Wordle round is going — !guess it, or a mod can !skipgame."
 	case boardMaze:
-		return "🧭 a maze round is going — !go to play, or a mod can !skipgame."
+		return "🧭 a GET OUT!!! round is going — !up !down !left !right to play, or a mod can !skipgame."
 	default:
 		return "another game is running — a mod can !skipgame."
 	}

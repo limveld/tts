@@ -11,7 +11,7 @@ import (
 	"tts/internal/maze"
 )
 
-// maze.toml: the Torch Maze's rules and pacing.
+// maze.toml: GET OUT!!!'s rules and pacing.
 //
 // Payouts are deliberately not here. They live in points.toml with every other
 // game's rewards, because what a win is worth belongs to the economy rather than
@@ -44,6 +44,7 @@ func LoadMazeConfig(path string) (mazeConfig, error) {
 	// exactly the settings an operator is most likely to have chosen on purpose.
 	doc := struct {
 		TickSeconds     int `toml:"tick_seconds"`
+		ResolveSeconds  int `toml:"resolve_seconds"`
 		MaxCycles       int `toml:"max_cycles"`
 		MaxSeconds      int `toml:"max_seconds"`
 		JoinCycles      int `toml:"join_cycles"`
@@ -67,6 +68,7 @@ func LoadMazeConfig(path string) (mazeConfig, error) {
 		Display string `toml:"display"`
 	}{
 		TickSeconds:     int(cfg.Tick / time.Second),
+		ResolveSeconds:  int(cfg.ResolveBuffer / time.Second),
 		MaxCycles:       cfg.Round.MaxCycles,
 		MaxSeconds:      cfg.Round.MaxSeconds,
 		JoinCycles:      cfg.Round.JoinCycles,
@@ -106,6 +108,7 @@ func LoadMazeConfig(path string) (mazeConfig, error) {
 	}
 
 	cfg.Tick = time.Duration(doc.TickSeconds) * time.Second
+	cfg.ResolveBuffer = time.Duration(doc.ResolveSeconds) * time.Second
 	cfg.Display = strings.ToLower(strings.TrimSpace(doc.Display))
 	cfg.Seed = doc.Seed
 	cfg.Round = maze.RoundConfig{
@@ -151,6 +154,12 @@ func (c mazeConfig) validate() error {
 	switch {
 	case c.Tick < time.Second:
 		return fmt.Errorf("tick_seconds %v: must be at least 1", c.Tick/time.Second)
+	case c.ResolveBuffer < 0:
+		return fmt.Errorf("resolve_seconds %v: cannot be negative", c.ResolveBuffer/time.Second)
+	case c.ResolveBuffer >= c.Tick:
+		return fmt.Errorf(
+			"resolve_seconds %v: must be shorter than tick_seconds %v, or the beat between turns is longer than the turn",
+			c.ResolveBuffer/time.Second, c.Tick/time.Second)
 	case c.Display != "panel" && c.Display != "full":
 		return fmt.Errorf("display %q: must be \"panel\" or \"full\"", c.Display)
 	case c.Round.MaxSeats < 1:
@@ -175,11 +184,20 @@ func (c mazeConfig) validate() error {
 	// both look fine — which is how a 10s tick with 60 cycles and a 320s guard
 	// boots cleanly and then ends every round at cycle 30 with the overlay still
 	// showing "CYCLE 30 / 60". Join ticks burn wall clock without advancing the
-	// cycle counter, so cycle N lands at (join_cycles + N) x tick.
-	if need := (c.Round.JoinCycles + c.Round.MaxCycles) * int(c.Tick/time.Second); c.Round.MaxSeconds < need {
+	// cycle counter, so cycle N lands at (join_cycles + N) x the cycle period.
+	//
+	// The period, not the tick: the resolve beat is wall clock the guard has to pay
+	// for too, and leaving it out here would under-count by a second a cycle — the
+	// same silent early ending in a smaller dose. Computed in milliseconds and
+	// rounded up, because dividing durations by time.Second truncates, and a config
+	// that is a fraction of a second short should fail rather than pass.
+	perCycle := c.cyclePeriod()
+	needMS := int64(c.Round.JoinCycles+c.Round.MaxCycles) * perCycle.Milliseconds()
+	if need := int((needMS + 999) / 1000); c.Round.MaxSeconds < need {
 		return fmt.Errorf(
-			"max_seconds %d is below %d: %d cycles plus a %d-cycle join window at %.0fs each needs that long, so the wall-clock guard would end every round early",
-			c.Round.MaxSeconds, need, c.Round.MaxCycles, c.Round.JoinCycles, c.Tick.Seconds())
+			"max_seconds %d is below %d: %d cycles plus a %d-cycle join window at %.0fs each (%.0fs to move, %.0fs to resolve) needs that long, so the wall-clock guard would end every round early",
+			c.Round.MaxSeconds, need, c.Round.MaxCycles, c.Round.JoinCycles,
+			perCycle.Seconds(), c.Tick.Seconds(), c.ResolveBuffer.Seconds())
 	}
 
 	// The board's own rules are the generator's to enforce, and the honest way to
