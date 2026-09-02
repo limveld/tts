@@ -426,6 +426,13 @@ html, body {
 }
 /* Thin, and the full width of the board it sits above. */
 #maze.m-panel .m-bar { width: 100%; height: 5px; }
+/* Seat rows go under the board in panel mode. The board already fills the panel's
+   width and the corner budget is a width, so this is the one direction there is
+   room in: ~110px of height against Connections' 500, for the only readout of who
+   is playing, what colour they are, what they are carrying and whether their
+   command registered. Without it the default display shows none of that. */
+#maze.m-panel .m-rows { width: 100%; margin-top: 0; }
+#maze.m-panel .m-hint { width: 100%; }
 
 #maze .m-grid {
   position: relative;
@@ -465,7 +472,24 @@ html, body {
 #maze .m-exit  { filter: drop-shadow(0 0 6px #ffd76a); }
 #maze .m-key   { filter: drop-shadow(0 0 5px #ffe071); animation: mKey 1.8s ease-in-out infinite; }
 @keyframes mKey { 50% { transform: translate(-50%, -58%); } }
-#maze .m-start { opacity: 0.55; font-size: calc(var(--m-tile) * 0.5); }
+/* The start tile is marked on the floor, not with a glyph at the cell centre:
+   every runner spawns on it, so a centred mark spends the join window and the
+   opening cycles buried under a pile of dots. It has to stay findable all round —
+   spikes throw you back here. Two classes beat .m-floor's own inset ring. */
+#maze .m-t.m-startcell {
+  box-shadow: inset 0 0 0 2px rgba(212, 175, 55, 0.5), inset 0 0 8px rgba(212, 175, 55, 0.18);
+}
+/* How many keys are on one cell, when more than one is. Two spiked carriers can
+   drop on the same tile, and two identical glyphs at one point drew as one. */
+#maze .m-keyn {
+  position: absolute;
+  right: calc(var(--m-tile) * -0.26);
+  bottom: calc(var(--m-tile) * -0.10);
+  font-family: var(--mono);
+  font-size: calc(var(--m-tile) * 0.30);
+  color: var(--gold);
+  text-shadow: 0 0 3px #000, 0 1px 0 #000;
+}
 /* A sprung trap is shown, then fades and stays gone — see MAZE_TRAP_FADE. Held at
    full strength for the first part so it is not missed through the stream delay,
    and `forwards` keeps it invisible rather than snapping back. */
@@ -487,7 +511,32 @@ html, body {
 }
 #maze .m-dot.m-carrying { box-shadow: 0 0 4px currentColor, 0 0 0 2px #ffe071; }
 #maze .m-dot.m-stuck    { opacity: 0.5; }
-#maze .m-dot.m-out      { display: none; }
+
+/* Movement itself is not here. mazeAnimateDots sets the transition inline, because
+   the FLIP invert has to be applied with transitions *off* for one frame and a
+   stylesheet cannot express that.
+   A spike is the exception: it throws a runner clear across the board, sliding it
+   would draw a line through walls, so the dot jumps and materialises instead. It
+   may use transform freely — a warping dot is the one case that never gets an
+   inline transform. */
+#maze .m-dot.m-warp { animation: mWarp 420ms ease-out; }
+@keyframes mWarp {
+  0%   { transform: translate(-50%, -50%) scale(0.3); opacity: 0.2; }
+  60%  { transform: translate(-50%, -50%) scale(1.6); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+
+/* A finisher fades at the door instead of blinking out. Opacity only, and
+   deliberately so: the same dot is being slid into the exit by an inline
+   transform, and a keyframe touching transform would override it — animations beat
+   inline styles in the cascade — so the runner would fade on the spot without ever
+   arriving. The negative animation-delay set alongside it resumes the fade across
+   the re-render on every move, the same trick a sprung trap uses. */
+#maze .m-dot.m-out { animation: mDotOut 900ms ease-in forwards; }
+@keyframes mDotOut {
+  0%, 30% { opacity: 1; }
+  100%    { opacity: 0; }
+}
 
 /* Coordinate rules, so a callout naming C4 can be followed on screen. */
 #maze .m-axis {
@@ -514,7 +563,19 @@ html, body {
 
 /* The countdown is the one element that has to be unmissable: it is the whole
    reason a player knows how long they have left to lock a move in or correct it. */
+/* The countdown, and what it is counting toward. Baseline-aligned so the big
+   number and its caption read as one sentence rather than two stacked elements. */
+#maze .m-clockrow {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--m-tile) * 0.14);
+}
 #maze .m-clock { font-size: calc(var(--m-tile) * 0.62); color: var(--text); }
+#maze .m-clocklabel {
+  font-family: var(--mono);
+  font-size: calc(var(--m-tile) * 0.24);
+  color: #8d97b5;
+}
 #maze .m-bar {
   height: calc(var(--m-tile) * 0.22);
   background: #1a1d29;
@@ -564,7 +625,21 @@ html, body {
   color: #0f1420;
   background: #2c3145;
 }
+/* The locked direction. One triangle, rotated — see mazeArrow. Sized a little
+   larger than the arrows it replaced: a solid shape can afford it, and this box is
+   the answer to "did my command register", which is the question every player has
+   every turn. */
+#maze .m-arrow {
+  display: block;
+  font-style: normal;
+  line-height: 1;
+  font-size: calc(var(--m-tile) * 0.38);
+}
 #maze .m-lock.m-on { background: var(--gold); box-shadow: 0 0 5px var(--gold); }
+/* A finished runner has no move to lock in and never will again, so the slot goes
+   away rather than sitting there as an empty box that reads as a broken control.
+   A racing player who has not chosen yet keeps theirs — that one means "waiting". */
+#maze .m-lock.m-empty { background: none; box-shadow: none; }
 #maze .m-row.m-done { opacity: 0.62; }
 
 /* Play-by-play. Terse on purpose: it is there so a viewer can see that things

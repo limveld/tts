@@ -373,7 +373,44 @@ const MAZE_TRAP_FADE = 6000;
 // fresh element restarts from the top — without this the icon would flash back to
 // full opacity each time somebody typed.
 let mazeTrapSeen = {};
-const MAZE_ARROWS = {up: '\u2191', down: '\u2193', left: '\u2190', right: '\u2192'};
+// Rotations, not four separate glyphs. The thin Unicode arrows this replaced were
+// only really legible pointing up: ↓ ← → are near-identical strokes at the panel's
+// eleven pixels, and the one with a vertical stem was the only one anybody could
+// read at a glance. A filled triangle keeps its shape and weight at any size, and
+// turning a single glyph guarantees all four directions read identically rather
+// than depending on how one font happens to draw each arrow.
+const MAZE_ARROWS = {up: 0, right: 90, down: 180, left: 270};
+
+// mazeArrow is the locked-in direction as a rotated triangle, or nothing when no
+// move is in. Compared against undefined rather than tested for truth, because up
+// is zero degrees.
+function mazeArrow(move) {
+  const deg = MAZE_ARROWS[move];
+  if (deg === undefined) return '';
+  return '<i class="m-arrow" style="transform:rotate(' + deg + 'deg)">\u25B2</i>';
+}
+// Placements are medals rather than a chequered flag. At the token's size the flag
+// resolves to a small grey chequerboard, which reads as a missing glyph rather than
+// as a finish; a medal carries its meaning in colour, which survives being small.
+// Off the podium there is no medal and the ordinal stands on its own.
+const MAZE_MEDALS = {1: '🥇', 2: '🥈', 3: '🥉'};
+
+// How long a runner takes to travel one cell. It has to fit inside the resolve
+// beat the bot leaves at the top of each cycle (resolve_seconds), so the movement
+// has landed before anyone is being asked to choose their next one.
+const MAZE_STEP_MS = 380;
+// How long a finisher stays on the board, sliding into the door and fading, rather
+// than blinking out at the payoff moment of the round.
+const MAZE_EXIT_FADE = 900;
+// Below this, a measured difference is rounding rather than movement. Rects come
+// back fractional, and a dot mid-warp is being scaled, so its centre survives the
+// arithmetic a hair off — enough to make `dx !== 0` true and slide a runner that
+// had not moved at all. A real step is 64px in the corner panel and 128px on the
+// stage, so half a pixel is nowhere near anything the game can produce.
+const MAZE_MIN_SLIDE = 0.5;
+// When each finisher was first seen, so the fade survives the re-render on every
+// move — same reason as mazeTrapSeen, and cleared with it.
+let mazeExitSeen = {};
 
 function mazeCell(s) {
   if (!s || s.length < 2) return null;
@@ -443,13 +480,130 @@ function mazeBlocks(d, prev) {
   return {span: span, tiles: t, fresh: fresh};
 }
 
+// mazeRows is the seat list: swatch, name, what the player is carrying, and the
+// direction they have locked in. Shared by both layouts rather than copied into
+// each, because two copies of this would drift and the panel's is the one nobody
+// would be looking at when it did.
+function mazeRows(d, players, prev) {
+  let rows = '<div class="m-rows">';
+  players.forEach(p => {
+    const wasP = prev && (prev.players || []).find(q => q.seat === p.seat);
+    // Flash a row whose state actually moved. The payload carries no event list,
+    // so the change itself is the signal.
+    const moved = wasP && (wasP.at !== p.at || wasP.hasKey !== p.hasKey ||
+                           wasP.stuckFor !== p.stuckFor || wasP.place !== p.place);
+    let token = '·';
+    if (p.place) token = (MAZE_MEDALS[p.place] || '') + mazeOrdinal(p.place);
+    else if (p.stuckFor) token = '🐻×' + p.stuckFor;
+    else if (p.hasKey) token = '🔑';
+    rows += '<div class="m-row' + (moved ? ' m-changed' : '') + (p.place ? ' m-done' : '') + '">' +
+            '<span class="m-swatch" style="background:' + (p.color || MAZE_FALLBACK_SEAT) + '"></span>' +
+            '<span class="m-name">' + escHtml(p.name || '') + '</span>' +
+            '<span class="m-token">' + token + '</span>' +
+            // The chosen direction, not just that one is chosen. It is the answer
+            // to "did my command register, and which way am I about to go", which
+            // is the question players have every cycle — and in panel mode it is
+            // also the only way to tell a registered move from one Twitch ate.
+            '<span class="m-lock' + (p.locked ? ' m-on' : '') +
+            (p.place ? ' m-empty' : '') + '">' +
+            mazeArrow(p.move) + '</span>' +
+            '</div>';
+  });
+  for (let i = players.length; i < (d.seats || 5); i++) {
+    rows += '<div class="m-row m-done"><span class="m-swatch"></span><span class="m-name">—</span></div>';
+  }
+  return rows + '</div>';
+}
+
+// mazeDotPositions records where every runner is on screen right now.
+//
+// This is the F in FLIP: measure, rebuild, invert, play. renderMaze replaces the
+// board wholesale, so a dot is a brand-new element on every render and a CSS
+// transition has nothing to transition *from*. Measuring first and inverting on
+// the new element gives the movement back without persisting anything across the
+// rebuild — and because it measures what is on screen rather than what the last
+// payload said, a push arriving mid-slide re-animates from wherever the dot
+// currently looks like it is, instead of snapping.
+function mazeDotPositions() {
+  const at = {};
+  mazeEl.querySelectorAll('.m-dot[data-seat]').forEach(el => {
+    // The centre, not the corner. A warping dot is mid-scale, and a scale about the
+    // element's own centre moves every edge of its box while leaving the centre
+    // exactly where it is — so measuring a corner made a dot that had just
+    // teleported appear to have drifted, and the next ordinary redraw slid it back
+    // from a position it had never been in.
+    const r = el.getBoundingClientRect();
+    at[el.dataset.seat] = {x: r.left + r.width / 2, y: r.top + r.height / 2};
+  });
+  return at;
+}
+
+// mazeCellSteps is how many cells apart two board coordinates are, or -1 if either
+// is unreadable. Cells rather than pixels on purpose: it is the same number in
+// panel and full mode, where a pixel threshold would have to know --m-tile.
+function mazeCellSteps(fromStr, toStr) {
+  const a = mazeCell(fromStr), b = mazeCell(toStr);
+  if (!a || !b) return -1;
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+// mazeAnimateDots plays the movement for a board that has just been rebuilt.
+function mazeAnimateDots(before, d, prev) {
+  // Nothing to animate *from*: a first paint, a new round, a reconnect replaying
+  // cached state, or a layout switch. All of them should land instantly rather
+  // than fly in from wherever the last board happened to have things.
+  if (!prev || d.roundId !== prev.roundId || d.display !== prev.display) return;
+
+  const wasAt = {};
+  (prev.players || []).forEach(p => { wasAt[p.seat] = p.at; });
+
+  mazeEl.querySelectorAll('.m-dot[data-seat]').forEach(el => {
+    const from = before[el.dataset.seat];
+    if (!from) return; // newly seated this render; nowhere to come from
+    const seat = Number(el.dataset.seat);
+    const steps = mazeCellSteps(wasAt[seat], (d.players || []).reduce(
+      (acc, q) => q.seat === seat ? q.at : acc, null));
+
+    // A spike throws a runner back to the start from anywhere on the board.
+    // Sliding that would draw a line straight through walls, so it jumps — and
+    // flashes, because a dot that silently relocates across the board is easy to
+    // lose track of, and this is the most consequential thing that happens.
+    if (steps > 1) { el.classList.add('m-warp'); return; }
+
+    const r = el.getBoundingClientRect();
+    const dx = from.x - (r.left + r.width / 2), dy = from.y - (r.top + r.height / 2);
+    // Settled, and nothing moved — by far the commonest render, since the board is
+    // redrawn on every !up as well as every cycle.
+    if (Math.abs(dx) < MAZE_MIN_SLIDE && Math.abs(dy) < MAZE_MIN_SLIDE) return;
+
+    // The -50%,-50% centring has to survive both halves of this, or every dot
+    // jumps half its own width on the way past.
+    el.style.transition = 'none';
+    el.style.transform = 'translate(-50%,-50%) translate(' + dx + 'px,' + dy + 'px)';
+    // Commit the inverted position with a forced reflow rather than waiting for an
+    // animation frame. A Browser Source is meant to be left running while not
+    // visible (see docs/obs-overlay.md), and a hidden document does not fire
+    // requestAnimationFrame — which would leave the dot stranded a whole cell from
+    // where it belongs until the next payload happened to redraw it. Reading a
+    // layout property is synchronous and cannot be skipped, and with at most five
+    // runners the cost is nothing.
+    void el.offsetWidth;
+    el.style.transition = 'transform ' + MAZE_STEP_MS + 'ms ease-out';
+    el.style.transform = 'translate(-50%,-50%)';
+  });
+}
+
 function renderMaze(d) {
   if (mazeTimer) { clearInterval(mazeTimer); mazeTimer = null; }
 
   if (!d || d.hidden) {
-    mazeEl.hidden = true; mazeEl.innerHTML = ''; mazePrev = null; mazeTrapSeen = {}; return;
+    mazeEl.hidden = true; mazeEl.innerHTML = '';
+    mazePrev = null; mazeTrapSeen = {}; mazeExitSeen = {}; return;
   }
   mazeEl.hidden = false;
+  // Captured before the class switch, because changing layout changes --m-tile and
+  // would move every dot before it could be measured.
+  const before = mazeDotPositions();
   const panel = d.display === 'panel';
   mazeEl.className = panel ? 'm-panel' : 'm-full';
 
@@ -460,13 +614,21 @@ function renderMaze(d) {
   // hidden push, leaving the previous round's spent traps tracked into the next
   // one — where they would never draw at all, on cells that might really be
   // trapped this time.
-  if (!prev || d.roundId !== prev.roundId) mazeTrapSeen = {};
+  if (!prev || d.roundId !== prev.roundId) { mazeTrapSeen = {}; mazeExitSeen = {}; }
   const g = mazeBlocks(d, prev);
   const n = d.size;
 
+  // The start tile is marked on the floor rather than with a glyph at the cell
+  // centre. Every runner spawns here, so a centred mark spends the whole join
+  // window and the opening cycles buried under a pile of dots — and it is the one
+  // landmark that keeps mattering, because spikes throw you back to it.
+  const startCell = mazeCell(d.start);
+  const startTile = startCell ? (2 * startCell.y + 1) * g.span + (2 * startCell.x + 1) : -1;
+
   let board = '<div class="m-grid" style="--m-span:' + g.span + '">';
   for (let i = 0; i < g.tiles.length; i++) {
-    board += '<i class="m-t m-' + g.tiles[i] + (g.fresh[i] ? ' m-new' : '') + '"></i>';
+    board += '<i class="m-t m-' + g.tiles[i] + (g.fresh[i] ? ' m-new' : '') +
+             (i === startTile ? ' m-startcell' : '') + '"></i>';
   }
 
   // Coordinate rules on the wall frame, so a callout naming C4 can be followed.
@@ -480,9 +642,18 @@ function renderMaze(d) {
     const c = mazeCell(cellStr);
     return c ? mazeAt(2 * c.x + 1.5, 2 * c.y + 1.5, 'm-mark ' + cls, glyph) : '';
   };
-  board += mark(d.start, 'm-start', '◦');
   board += mark(d.exit, 'm-exit', '🚪');
-  (d.keys || []).forEach(k => { board += mark(k, 'm-key', '🔑'); });
+  // Keys are counted per cell before being drawn. Two can genuinely share one —
+  // KeysOnMap says as much — and two identical glyphs at one point drew as one, so
+  // the board understated how many keys were still in play.
+  const keyCount = {};
+  (d.keys || []).forEach(k => { keyCount[k] = (keyCount[k] || 0) + 1; });
+  Object.keys(keyCount).forEach(k => {
+    const c = mazeCell(k);
+    if (!c) return;
+    const badge = keyCount[k] > 1 ? '<b class="m-keyn">×' + keyCount[k] + '</b>' : '';
+    board += mazeAt(2 * c.x + 1.5, 2 * c.y + 1.5, 'm-mark m-key', '🔑' + badge);
+  });
   // Only sprung traps are ever sent, so each one marks a hazard that has already
   // been spent by whoever hit it. Show it briefly and let it fade: a permanent
   // icon reads as "danger here" on a cell that is now the safest on the board.
@@ -492,6 +663,12 @@ function renderMaze(d) {
   const nowMs = Date.now();
   (d.traps || []).forEach(tr => {
     if (mazeTrapSeen[tr.at] === undefined) mazeTrapSeen[tr.at] = nowMs;
+    // A spiked key-holder drops their key on the trap cell, so this collides on
+    // every drop — and a drop is the only way a key ever returns to the board. The
+    // key wins: it is live and decides the round, the trap is spent and inert, and
+    // chat still narrates the spiking. The fade is stamped above either way, so the
+    // icon cannot reappear at full strength if the key is picked up later.
+    if (keyCount[tr.at]) return;
     const age = nowMs - mazeTrapSeen[tr.at];
     if (age >= MAZE_TRAP_FADE) return; // spent and faded; the cell is just floor now
     const c = mazeCell(tr.at);
@@ -504,71 +681,94 @@ function renderMaze(d) {
   const players = d.players || [];
   players.forEach(p => {
     const c = mazeCell(p.at);
-    if (!c || p.place) return; // a finished runner has left the maze
+    if (!c) return;
+    // A finisher is drawn a little longer rather than vanishing the instant they
+    // are through: their last step is into the door, and it is the one moment of
+    // the round worth watching. Stamped so the fade resumes across the re-render
+    // on every move instead of restarting, exactly as a sprung trap does.
+    let exiting = '', age = 0;
+    if (p.place) {
+      if (mazeExitSeen[p.seat] === undefined) mazeExitSeen[p.seat] = nowMs;
+      age = nowMs - mazeExitSeen[p.seat];
+      if (age >= MAZE_EXIT_FADE) return; // through the door and gone
+      exiting = ' m-out';
+    }
     // Fixed sub-slot per seat, so a player's dot sits in the same relative spot
     // whichever cell they are in and they can follow themselves in a pile-up.
     const sx = (p.seat % 3 + 0.5) / 3, sy = (Math.floor(p.seat / 3) + 0.5) / 2;
-    const cls = 'm-dot' + (p.hasKey ? ' m-carrying' : '') + (p.stuckFor ? ' m-stuck' : '');
-    board += '<span class="' + cls + '" style="color:' + (p.color || MAZE_FALLBACK_SEAT) +
-             ';left:calc(var(--m-tile)*' + (2 * c.x + 1 + sx).toFixed(3) +
-             ');top:calc(var(--m-tile)*' + (2 * c.y + 1 + sy).toFixed(3) + ')"></span>';
+    const cls = 'm-dot' + (p.hasKey ? ' m-carrying' : '') + (p.stuckFor ? ' m-stuck' : '') + exiting;
+    let style = 'color:' + (p.color || MAZE_FALLBACK_SEAT) +
+                ';left:calc(var(--m-tile)*' + (2 * c.x + 1 + sx).toFixed(3) +
+                ');top:calc(var(--m-tile)*' + (2 * c.y + 1 + sy).toFixed(3) + ')';
+    if (exiting) style += ';animation-delay:' + (-age) + 'ms';
+    board += '<span class="' + cls + '" data-seat="' + p.seat + '" style="' + style + '"></span>';
   });
   board += '</div>';
 
   // --- side panel ---
   //
-  // Panel mode is the board and a timer strip, nothing else. It sits in the
-  // corner over whatever else is on screen, so it earns its space by showing the
-  // game rather than a scoreboard about it — and the one thing a player cannot
-  // play without is how long is left to lock a move in. Names, key state, the
-  // chosen directions and the feed are full-mode furniture.
+  // Panel mode used to be the board and a timer strip and nothing else, on the
+  // grounds that a corner widget earns its space by showing the game rather than a
+  // scoreboard about it. That reasoning holds for the feed, which is narration
+  // chat already carries — but not for the seat rows, which are the only place
+  // anyone can read their own colour, whether their command registered, whether
+  // they are carrying a key, and who has finished. Panel is the shipped default,
+  // so leaving those out meant most rounds ran with the player-state half of the
+  // game drawn nowhere at all, and a winner simply vanished off the board.
   const joining = d.phase === 'joining';
   const done = d.phase === 'done';
+  const rows = mazeRows(d, players, prev);
+  // The one instruction that matters, in the one window where it can be acted on.
+  const joinHint = '<div class="m-hint">!up !down !left !right — take a seat</div>';
 
-  if (panel) {
-    // Timer above the board: it is the only chrome here, and a strip along the top
-    // reads as a header rather than as something dangling off the bottom.
-    mazeEl.innerHTML =
-      (done ? '' : '<div class="m-bar" id="m-bar"><i id="m-fill"></i></div>') + board;
+  // The single place the board actually lands, so the two layouts cannot drift
+  // over whether they animate or re-arm the clock.
+  const commit = html => {
+    mazeEl.innerHTML = html;
+    mazeAnimateDots(before, d, prev);
     mazePrev = d;
     startMazeCountdown(d, done);
+  };
+
+  if (panel) {
+    // Timer above the board: a strip along the top reads as a header rather than as
+    // something dangling off the bottom. The rows go under the board, because the
+    // board already fills the panel's width and the corner budget is a width.
+    commit((done ? '' : '<div class="m-bar" id="m-bar"><i id="m-fill"></i></div>') +
+           board + rows + (joining ? joinHint : ''));
     return;
   }
 
-  let head = '<div class="m-title">TORCH MAZE</div>';
-  head += '<div class="m-cycle">' + (joining ? 'SEATS OPEN' :
-          done ? 'ROUND OVER' : 'CYCLE ' + d.cycle + ' / ' + d.maxCycles) + '</div>';
+  let head = '<div class="m-title">GET OUT!!!</div>';
+  // Once somebody is out, MaxCycles stops being the deadline that binds: the round
+  // ends PlacementCycles after the first escape. Counting toward the cap told
+  // everyone racing for second they had forty cycles when they had six, and the
+  // scramble is only a race if its clock is the one on screen.
+  // "Turn", not "cycle". A cycle is what the engine and maze.toml call it, and it
+  // is the right word there; on screen it is the thing a player takes, and every
+  // other word around it — take a seat, one move a turn — already said turn.
+  let phaseLine;
+  if (joining) {
+    phaseLine = 'SEATS OPEN';
+  } else if (done) {
+    phaseLine = 'ROUND OVER';
+  } else if (d.endsAtCycle > 0) {
+    const left = Math.max(0, d.endsAtCycle - d.cycle);
+    phaseLine = 'PLACES CLOSE IN ' + left + (left === 1 ? ' TURN' : ' TURNS');
+  } else {
+    phaseLine = 'TURN ' + d.cycle + ' / ' + d.maxCycles;
+  }
+  head += '<div class="m-cycle">' + phaseLine + '</div>';
   if (!done) {
-    head += '<div class="m-clock" id="m-clock"></div>' +
+    // The number on its own answered "how long" without ever saying what it was
+    // counting toward. The label is a sibling rather than a child because the
+    // countdown writes textContent into #m-clock every frame and would erase it.
+    head += '<div class="m-clockrow">' +
+            '<span class="m-clock" id="m-clock"></span>' +
+            '<span class="m-clocklabel">left till next turn</span>' +
+            '</div>' +
             '<div class="m-bar" id="m-bar"><i id="m-fill"></i></div>';
   }
-
-  let rows = '<div class="m-rows">';
-  players.forEach(p => {
-    const wasP = prev && (prev.players || []).find(q => q.seat === p.seat);
-    // Flash a row whose state actually moved. The payload carries no event list,
-    // so the change itself is the signal.
-    const moved = wasP && (wasP.at !== p.at || wasP.hasKey !== p.hasKey ||
-                           wasP.stuckFor !== p.stuckFor || wasP.place !== p.place);
-    let token = '·';
-    if (p.place) token = '🏁' + mazeOrdinal(p.place);
-    else if (p.stuckFor) token = '🐻×' + p.stuckFor;
-    else if (p.hasKey) token = '🔑';
-    rows += '<div class="m-row' + (moved ? ' m-changed' : '') + (p.place ? ' m-done' : '') + '">' +
-            '<span class="m-swatch" style="background:' + (p.color || MAZE_FALLBACK_SEAT) + '"></span>' +
-            '<span class="m-name">' + escHtml(p.name || '') + '</span>' +
-            '<span class="m-token">' + token + '</span>' +
-            // The chosen direction, not just that one is chosen. It is the answer
-            // to "did my command register, and which way am I about to go", which
-            // is the question players have every cycle.
-            '<span class="m-lock' + (p.locked ? ' m-on' : '') + '">' +
-            (MAZE_ARROWS[p.move] || '') + '</span>' +
-            '</div>';
-  });
-  for (let i = players.length; i < (d.seats || 5); i++) {
-    rows += '<div class="m-row m-done"><span class="m-swatch"></span><span class="m-name">—</span></div>';
-  }
-  rows += '</div>';
 
   // The rolling play-by-play. It lives in the panel rather than going through the
   // notify toasts: those are serialised at ~5.5s each, so a busy cycle would back
@@ -584,7 +784,7 @@ function renderMaze(d) {
 
   let foot = '';
   if (joining) {
-    foot = '<div class="m-hint">!go w a s d — take a seat</div>';
+    foot = joinHint;
   } else if (done) {
     const placed = players.filter(p => p.place).sort((a, b) => a.place - b.place);
     foot = '<div class="m-banner">' + (placed.length
@@ -596,15 +796,19 @@ function renderMaze(d) {
       : left + (left === 1 ? ' key left' : ' keys left')) + '</div>';
   }
 
-  mazeEl.innerHTML = board + '<div class="m-side">' + head + rows + feed + foot + '</div>';
-  mazePrev = d;
-
-  startMazeCountdown(d, done);
+  commit(board + '<div class="m-side">' + head + rows + feed + foot + '</div>');
 }
 
 // startMazeCountdown restarts the cycle timer. The bot pushes once per cycle plus
-// once per move, so this re-arms often; that is fine, since every push carries the
-// same tickMs and the timer is the thing that has to be unmissable.
+// once per move, so this re-arms often — and that was a bug, not a harmless one.
+// It used to count tickMs down from whenever it was re-armed, so every player who
+// typed sent the bar back to full and it never reached zero. Then the cycle
+// resolved on the bot's own schedule, which from a seat looked exactly like the
+// turn being skipped with time still showing.
+//
+// The payload now carries how much of the cycle is actually left, so a re-arm
+// resumes the same countdown instead of starting a new one. The bar's full width
+// stays tickMs, so the fraction shown is a fraction of a whole turn.
 //
 // The numeric readout is full-mode only, so its element is looked up rather than
 // assumed — panel mode draws the bar alone.
@@ -614,9 +818,16 @@ function startMazeCountdown(d, done) {
   const bar = document.getElementById('m-bar');
   const fill = document.getElementById('m-fill');
   if (!bar || !fill) return;
+  const startLeft = typeof d.cycleMsLeft === 'number' ? d.cycleMsLeft : d.tickMs;
   const started = Date.now();
   const tick = () => {
-    const left = Math.max(0, d.tickMs - (Date.now() - started));
+    // cycleMsLeft counts the whole cycle, which is the turn plus the resolve beat
+    // the bot leaves at the top of it. Capping the *displayed* value at one turn is
+    // what produces the beat: while the remainder is longer than a turn the bar
+    // reads full and holds, and the runners are sliding into place underneath it.
+    // Then it counts a truthful turn down to zero, and a mid-cycle push resyncs it
+    // rather than refilling it.
+    const left = Math.min(d.tickMs, Math.max(0, startLeft - (Date.now() - started)));
     if (clock) clock.textContent = (left / 1000).toFixed(1) + 's';
     fill.style.width = (100 * left / d.tickMs) + '%';
     bar.classList.toggle('m-urgent', left < 2000);
